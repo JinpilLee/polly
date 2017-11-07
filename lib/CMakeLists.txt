@@ -52,6 +52,7 @@ add_library(PollyCore OBJECT
   Support/DumpModulePass.cpp
   Support/VirtualInstruction.cpp
   ${POLLY_JSON_FILES}
+  Transform/LoopExtraction.cpp
   Transform/Canonicalization.cpp
   Transform/CodePreparation.cpp
   Transform/DeadCodeElimination.cpp
