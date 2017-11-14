@@ -34,6 +34,7 @@ add_library(PollyCore OBJECT
   Analysis/PruneUnprofitable.cpp
   CodeGen/BlockGenerators.cpp
   ${ISL_CODEGEN_FILES}
+  CodeGen/SPDCodeGen.cpp
   CodeGen/LoopGenerators.cpp
   CodeGen/IRBuilder.cpp
   CodeGen/Utils.cpp

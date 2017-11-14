@@ -17,6 +17,7 @@
 #define POLLY_LOOP_EXTRACTION_H
 
 #include "llvm/Analysis/LoopPass.h"
+#include <vector>
 
 using namespace llvm;
 
@@ -36,8 +37,10 @@ struct LoopExtraction : public LoopPass {
 
   bool runOnLoop(Loop *L, LPPassManager &) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
-};
 
+private:
+  std::vector<Function *> ExtractedFunctionList;
+};
 } // end namespace polly
 
 namespace llvm {

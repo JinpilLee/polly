@@ -237,6 +237,7 @@ void initializePollyPasses(PassRegistry &Registry) {
   LLVMInitializeNVPTXAsmPrinter();
 #endif
   initializeLoopExtractionPass(Registry);
+  initializeSPDCodeGenPass(Registry);
   initializeCodePreparationPass(Registry);
   initializeDeadCodeElimPass(Registry);
   initializeDependenceInfoPass(Registry);
@@ -285,8 +286,13 @@ void initializePollyPasses(PassRegistry &Registry) {
 ///
 /// Polly supports the isl internal code generator.
 void registerPollyPasses(llvm::legacy::PassManagerBase &PM) {
-  if (EnableSPDGen)
+  if (EnableSPDGen) {
+    // FIXME barrier to preserve analysis results, avoid unnecessary recomputing
+    PM.add(createBarrierNoopPass());
     PM.add(polly::createLoopExtractionPass());
+    // FIXME needs barrier here???
+    PM.add(createBarrierNoopPass());
+  }
 
   if (DumpBefore)
     PM.add(polly::createDumpModulePass("-before", true));
@@ -359,6 +365,14 @@ void registerPollyPasses(llvm::legacy::PassManagerBase &PM) {
     PM.add(
         polly::createPPCGCodeGenerationPass(GPUArchChoice, GPURuntimeChoice));
 #endif
+
+  if (EnableSPDGen) {
+    // FIXME three-step process
+    // 1. scop pass to analysis Scop (Scop Pass)
+    // 2. generate SPD (Scop Pass)
+    // 3. replace function call with external runtime (Function Pass?)
+    PM.add(createSPDCodeGenPass());
+  }
 
   // FIXME: This dummy ModulePass keeps some programs from miscompiling,
   // probably some not correctly preserved analyses. It acts as a barrier to

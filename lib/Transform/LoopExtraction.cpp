@@ -17,6 +17,7 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/CodeExtractor.h"
 
+// FIXME for test
 #include <iostream>
 
 using namespace llvm;
@@ -25,7 +26,6 @@ using namespace polly;
 #define DEBUG_TYPE "polly-loop-ext"
 
 bool LoopExtraction::runOnLoop(Loop *L, LPPassManager &) {
-/*
   if (skipLoop(L))
     return false;
 
@@ -84,24 +84,24 @@ bool LoopExtraction::runOnLoop(Loop *L, LPPassManager &) {
     if (NumLoops == 0) return Changed;
     --NumLoops;
     CodeExtractor Extractor(DT, *L);
-    if (Extractor.extractCodeRegion() != nullptr) {
+    Function *ExtractedFunction = Extractor.extractCodeRegion();
+    if (ExtractedFunction != nullptr) {
       Changed = true;
       // After extraction, the loop is replaced by a function call, so
       // we shouldn't try to run any more loop passes on it.
       LI.markAsRemoved(L);
+      ExtractedFunctionList.push_back(ExtractedFunction);
     }
   }
 
   return Changed;
-*/
-  return false;
 }
 
 void LoopExtraction::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequiredID(BreakCriticalEdgesID);
-//  AU.addRequiredID(LoopSimplifyID);
-//  AU.addRequired<DominatorTreeWrapperPass>();
-//  AU.addRequired<LoopInfoWrapperPass>();
+  AU.addRequiredID(LoopSimplifyID);
+  AU.addRequired<DominatorTreeWrapperPass>();
+  AU.addRequired<LoopInfoWrapperPass>();
 }
 
 char LoopExtraction::ID = 0;
