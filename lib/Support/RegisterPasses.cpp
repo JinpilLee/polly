@@ -286,6 +286,7 @@ void initializePollyPasses(PassRegistry &Registry) {
 ///
 /// Polly supports the isl internal code generator.
 void registerPollyPasses(llvm::legacy::PassManagerBase &PM) {
+/*
   if (EnableSPDGen) {
     // FIXME barrier to preserve analysis results, avoid unnecessary recomputing
     PM.add(createBarrierNoopPass());
@@ -293,6 +294,7 @@ void registerPollyPasses(llvm::legacy::PassManagerBase &PM) {
     // FIXME needs barrier here???
     PM.add(createBarrierNoopPass());
   }
+*/
 
   if (DumpBefore)
     PM.add(polly::createDumpModulePass("-before", true));
