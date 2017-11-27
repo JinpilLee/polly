@@ -4,7 +4,8 @@ set(ISL_CODEGEN_FILES
     CodeGen/IslAst.cpp
     CodeGen/IslExprBuilder.cpp
     CodeGen/IslNodeBuilder.cpp
-    CodeGen/CodeGeneration.cpp)
+    CodeGen/CodeGeneration.cpp
+    CodeGen/SPDPrinter.cpp)
 
 if (GPU_CODEGEN)
   set (GPGPU_CODEGEN_FILES
