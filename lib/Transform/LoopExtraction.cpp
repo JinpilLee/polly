@@ -14,6 +14,7 @@
 #include "polly/LinkAllPasses.h"
 #include "polly/LoopExtraction.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/CodeExtractor.h"
 
@@ -84,13 +85,19 @@ bool LoopExtraction::runOnLoop(Loop *L, LPPassManager &) {
     if (NumLoops == 0) return Changed;
     --NumLoops;
     CodeExtractor Extractor(DT, *L);
-    Function *ExtractedFunction = Extractor.extractCodeRegion();
-    if (ExtractedFunction != nullptr) {
+    Function *ExtractedFunc = Extractor.extractCodeRegion();
+    if (ExtractedFunc != nullptr) {
       Changed = true;
       // After extraction, the loop is replaced by a function call, so
       // we shouldn't try to run any more loop passes on it.
       LI.markAsRemoved(L);
-      ExtractedFunctionList.push_back(ExtractedFunction);
+      Metadata *MDArgs[] = {
+        ValueAsMetadata::get(ExtractedFunc)
+      };
+      ExtractedFunc->setMetadata("polly_extracted_loop",
+                                 MDNode::get(ExtractedFunc->getContext(),
+                                             MDArgs));
+      std::cerr << ExtractedFunc->getName().str() << "'s address is " << (void *)ExtractedFunc << "\n";
     }
   }
 
@@ -112,5 +119,9 @@ Pass *polly::createLoopExtractionPass() {
 
 INITIALIZE_PASS_BEGIN(LoopExtraction, "polly-loop-ext",
                       "Polly - Loop Extraction", false, false);
+INITIALIZE_PASS_DEPENDENCY(BreakCriticalEdges);
+INITIALIZE_PASS_DEPENDENCY(LoopSimplify);
+INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass);
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass);
 INITIALIZE_PASS_END(LoopExtraction, "polly-loop-ext",
                     "Polly - Loop Extraction", false, false)

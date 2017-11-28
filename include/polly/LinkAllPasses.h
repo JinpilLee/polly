@@ -33,6 +33,7 @@ class RegionPass;
 namespace polly {
 llvm::Pass *createLoopExtractionPass();
 llvm::Pass *createSPDCodeGenPass();
+llvm::Pass *createHostCodeGenerationPass();
 llvm::Pass *createCodePreparationPass();
 llvm::Pass *createDeadCodeElimPass();
 llvm::Pass *createDependenceInfoPass();
@@ -103,6 +104,7 @@ namespace llvm {
 class PassRegistry;
 void initializeLoopExtractionPass(llvm::PassRegistry &);
 void initializeSPDCodeGenPass(llvm::PassRegistry &);
+void initializeHostCodeGenerationPass(llvm::PassRegistry &);
 void initializeCodePreparationPass(llvm::PassRegistry &);
 void initializeDeadCodeElimPass(llvm::PassRegistry &);
 void initializeJSONExporterPass(llvm::PassRegistry &);
