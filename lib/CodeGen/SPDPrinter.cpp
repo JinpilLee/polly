@@ -100,6 +100,7 @@ void SPDPrinter::emitValue(Value *V) {
     *OS << MA->getOriginalBaseAddr()->getName().str();
 
     // FIXME we need to consider array subscript
+    std::cerr << "ACCESS: " << MA->getOriginalBaseAddr()->getName().str() << "\n";
     unsigned Num = MA->getNumSubscripts();
     for (unsigned i = 0; i < Num; i++) {
       MA->getSubscript(i)->dump();
