@@ -18,9 +18,6 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/CodeExtractor.h"
 
-// FIXME for test
-#include <iostream>
-
 using namespace llvm;
 using namespace polly;
 
@@ -92,12 +89,11 @@ bool LoopExtraction::runOnLoop(Loop *L, LPPassManager &) {
       // we shouldn't try to run any more loop passes on it.
       LI.markAsRemoved(L);
       Metadata *MDArgs[] = {
-        ValueAsMetadata::get(ExtractedFunc)
+        ValueAsMetadata::get(&*(L->getHeader()->begin()))
       };
       ExtractedFunc->setMetadata("polly_extracted_loop",
                                  MDNode::get(ExtractedFunc->getContext(),
                                              MDArgs));
-      std::cerr << ExtractedFunc->getName().str() << "'s address is " << (void *)ExtractedFunc << "\n";
     }
   }
 

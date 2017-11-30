@@ -27,6 +27,9 @@ class Function;
 } // namespace llvm
 
 namespace polly {
+class Scop;
+class ScopInfo;
+
 struct HostCodeGeneration : public FunctionPass {
   static char ID;
 
@@ -34,6 +37,9 @@ struct HostCodeGeneration : public FunctionPass {
 
   bool runOnFunction(Function &F) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
+
+private:
+  const Scop *getScopFromInstr(Instruction *Instr, ScopInfo *SI) const;
 };
 } // end namespace polly
 
