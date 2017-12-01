@@ -13,21 +13,44 @@
 
 #include "polly/LinkAllPasses.h"
 #include "polly/HostCodeGeneration.h"
+#include "polly/ScopInfo.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IRBuilder.h"
+
+// FIXME for test
+#include <iostream>
 
 using namespace llvm;
 using namespace polly;
 
 #define DEBUG_TYPE "polly-host-codegen"
 
-// FIXME for test
-#include <iostream>
+const Scop *HostCodeGeneration::getScopFromInstr(Instruction *Instr,
+                                                 ScopInfo *SI) const {
+  BasicBlock *BB = Instr->getParent();
+  for (auto &It : *SI) {
+    Region *R = It.first;
+    if (R->contains(BB)) {
+      return It.second.get();
+    }
+  }
+
+  llvm_unreachable("cannot find a scop");
+}
 
 bool HostCodeGeneration::runOnFunction(Function &F) {
+  ScopInfo *SI = getAnalysis<ScopInfoWrapperPass>().getSI();
   bool Changed = false;
 
-  if (F.getMetadata("polly_extracted_loop")) {
+  if (MDNode *Node = F.getMetadata("polly_extracted_loop")) {
+    ValueAsMetadata *VM = dyn_cast<ValueAsMetadata>(Node->getOperand(0));
+    const Scop *S
+      = getScopFromInstr(dyn_cast<Instruction>(VM->getValue()), SI);
+// FIXME for test
+    std::cerr << "Scop INFO --------------------------------\n";
+    S->dump();
+    std::cerr << "Scop INFO END ----------------------------\n";
+
     // FIXME consider better impl than using counter
     unsigned InstCount = 0;
     for (auto UI = F.use_begin(), UE = F.use_end(); UI != UE;) {
@@ -78,6 +101,8 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
 }
 
 void HostCodeGeneration::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<ScopInfoWrapperPass>();
+  AU.addPreserved<ScopInfoWrapperPass>();
 }
 
 char HostCodeGeneration::ID = 0;
@@ -88,5 +113,6 @@ Pass *polly::createHostCodeGenerationPass() {
 
 INITIALIZE_PASS_BEGIN(HostCodeGeneration, "polly-host-codegen",
                       "Polly - Host Code Generation", false, false);
+INITIALIZE_PASS_DEPENDENCY(ScopInfoWrapperPass);
 INITIALIZE_PASS_END(HostCodeGeneration, "polly-host-codegen",
                     "Polly - Host Code Generation", false, false)
