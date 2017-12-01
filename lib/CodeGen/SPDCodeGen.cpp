@@ -13,22 +13,23 @@
 
 #include "polly/LinkAllPasses.h"
 #include "polly/CodeGen/SPDCodeGen.h"
-#include "polly/CodeGen/SPDPrinter.h"
+#include "polly/CodeGen/SPDIR.h"
 
 #define DEBUG_TYPE "polly-ast"
 
 using namespace llvm;
 using namespace polly;
 
-bool SPDCodeGen::runOnScop(Scop &Scop) {
+bool SPDCodeGen::runOnScop(Scop &S) {
   // Skip SCoPs in case they're already handled by PPCGCodeGeneration.
   // FIXME needed for SPDCodeGen?
-  if (Scop.isToBeSkipped())
+  if (S.isToBeSkipped())
     return false;
 
-  for (ScopStmt &Stmt : Scop) {
-    SPDPrinter Printer(&Stmt);
-  }
+
+  SPDIR IR(S);
+// FIXME for test
+  IR.dump();
 
   return false;
 }

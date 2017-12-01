@@ -31,8 +31,10 @@ public:
   SPDInstr(Instruction *I) : LLVMInstr(I) {}
 
   bool isDeadInstr() const {
-    return UserList.empty() | LLVMInstr->isStore();
+    return UserList.empty() | LLVMInstr->mayWriteToMemory();
   }
+
+  void dump() const;
 
 private:
   Instruction *LLVMInstr;
@@ -43,16 +45,7 @@ private:
 
 class SPDIR {
 public:
-  SPDIR(Scop *S) {
-    for (Instruction *I : LLVMIR) {
-      // check I operands() exists in InstrList
-      // increase all UserList found
-
-      InstrList.push_back(new SPDInstr(I));
-    }
-
-    removeDeadInstrs();
-  }
+  SPDIR(Scop &S);
 
   ~SPDIR() {
     for (SPDInstr *I : InstrList) {
@@ -61,13 +54,12 @@ public:
   }
 
   void dump() const;
-  void print() const;
 
 private:
   std::vector<SPDInstr *> InstrList;
 
   void removeDeadInstrs();
-}
+};
 } // end namespace polly
 
 #endif // POLLY_SPD_IR_H
