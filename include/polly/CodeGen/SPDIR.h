@@ -28,19 +28,19 @@ class SPDIR;
 
 class SPDInstr {
 public:
-  SPDInstr(Instruction *I) : LLVMInstr(I) {}
+  static SPDInstr *get(Instruction *I, SPDIR *IR);
 
-  bool isDeadInstr() const {
-    return UserList.empty() | LLVMInstr->mayWriteToMemory();
-  }
-
+  bool equal(Instruction *) const;
+  bool isDeadInstr() const;
   void dump() const;
 
 private:
   Instruction *LLVMInstr;
-  std::vector<SPDInstr *> UserList;
+  SPDIR *ParentIR;
 
   SPDInstr() = delete;
+  SPDInstr(Instruction *I, SPDIR *IR)
+    : LLVMInstr(I), ParentIR(IR) {}
 };
 
 class SPDIR {
@@ -53,6 +53,7 @@ public:
     }
   }
 
+  bool has(Instruction *I) const;
   void dump() const;
 
 private:

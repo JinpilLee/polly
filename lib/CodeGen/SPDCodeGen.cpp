@@ -26,10 +26,7 @@ bool SPDCodeGen::runOnScop(Scop &S) {
   if (S.isToBeSkipped())
     return false;
 
-
   SPDIR IR(S);
-// FIXME for test
-  IR.dump();
 
   return false;
 }
