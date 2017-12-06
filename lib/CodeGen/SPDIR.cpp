@@ -11,20 +11,42 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "isl/set.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Value.h"
 #include "polly/ScopInfo.h"
 #include "polly/CodeGen/SPDIR.h"
 #include "polly/CodeGen/SPDPrinter.h"
+#include <vector>
 
+// FIXME for test
+#include "isl/id.h"
 #include <iostream>
+#include <cstdio>
 
 using namespace llvm;
 using namespace polly;
 
-SPDInstr *SPDInstr::get(Instruction *I, SPDIR *IR) {
+SPDInstr *SPDInstr::get(Instruction *I, ScopStmt *Stmt, SPDIR *IR) {
   if (I->mayReadOrWriteMemory()) {
-    return new SPDInstr(I, IR);
+    MemoryAccess *MA = Stmt->getArrayAccessOrNULLFor(I);
+    unsigned Num = MA->getNumSubscripts();
+    for (unsigned i = 0; i < Num; i++) {
+      const SCEVAddRecExpr *SExpr
+        = dyn_cast<SCEVAddRecExpr>(MA->getSubscript(i));
+      assert(SExpr->isAffine() &&
+             "array subscripts should be expressed by an affine function");
+
+// FIXME current impl only allows {0,+,1}<loop>
+/*
+      const SCEV *StartExpr = SExpr->getStart();
+      assert(StartExpr->isZero() && "FIXME: currently StartExpr should be 0");
+      const SCEV *StepExpr = SExpr->getStepRecurrence(*(Stmt->getParent()->getSE()));
+      assert(StepExpr->isOne() && "FIXME: currently StepExpr should be 1");
+*/
+    }
+
+    return new SPDInstr(I, Stmt, IR);
   }
 
   switch (I->getOpcode()) {
@@ -39,7 +61,7 @@ SPDInstr *SPDInstr::get(Instruction *I, SPDIR *IR) {
   case Instruction::UDiv:
   case Instruction::SDiv:
   case Instruction::FDiv:
-    return new SPDInstr(I, IR);
+    return new SPDInstr(I, Stmt, IR);
   }
 
   return nullptr;
@@ -56,7 +78,7 @@ bool SPDInstr::isDeadInstr() const {
 
   for (auto UI = LLVMInstr->use_begin(),
        UE = LLVMInstr->use_end(); UI != UE;) {
-    Use *U = &*UI;
+    const Use *U = &*UI;
     ++UI;
     Instruction *UserInstr = dyn_cast<Instruction>(U->getUser());
     if (ParentIR->has(UserInstr)) {
@@ -72,18 +94,49 @@ void SPDInstr::dump() const {
 }
 
 SPDIR::SPDIR(Scop &S) {
-// FIXME this may miss conditional stmts
+  isl_set *MergedStmtSet = nullptr;
   for (ScopStmt &Stmt : S) {
+    isl_set *CurrentStmtSet = isl_set_reset_tuple_id(Stmt.getDomain());
+
+    assert(Stmt.isBlockStmt() && "ScopStmt is not a BlockStmt\n");
     BasicBlock *BB = Stmt.getBasicBlock();
+
+    // TODO init InstrStreamSetList
+    // TODO merge InstrStreamSetList into a single set
     for (BasicBlock::iterator IIB = BB->begin(), IIE = BB->end();
          IIB != IIE; ++IIB) {
       Instruction &I = *IIB;
-      SPDInstr *NewInstr = SPDInstr::get(&I, this);
+      SPDInstr *NewInstr = SPDInstr::get(&I, &Stmt, this);
       if (NewInstr != nullptr) {
         InstrList.push_back(NewInstr);
       }
     }
+
+    // FIXME is this a good impl?
+    if (MergedStmtSet == nullptr) {
+      MergedStmtSet = isl_set_copy(CurrentStmtSet);
+    }
+    else {
+      // TODO how handle this?
+      // memory leak here?
+      isl_space *MSpace = isl_set_get_space(MergedStmtSet);
+      isl_space *CSpace = isl_set_get_space(CurrentStmtSet);
+      if (!isl_space_is_equal(MSpace, CSpace)) {
+        llvm_unreachable("space is not equal");
+      }
+
+      isl_space_free(MSpace);
+      isl_space_free(CSpace);
+
+      MergedStmtSet = isl_set_union(MergedStmtSet,
+                                    isl_set_copy(CurrentStmtSet));
+    }
+
+    printf("MergedDomain: %s\n", isl_set_to_str(MergedStmtSet));
+    isl_set_free(CurrentStmtSet);
   }
+
+  isl_set_free(MergedStmtSet);
 
   removeDeadInstrs();
 }

@@ -344,7 +344,12 @@ void registerPollyPasses(llvm::legacy::PassManagerBase &PM) {
       break; /* Do nothing */
 
     case OPTIMIZER_ISL:
-      PM.add(polly::createIslScheduleOptimizerPass());
+      if (EnableSPDGen) {
+        // TODO do some optimization on polly?
+      }
+      else {
+        PM.add(polly::createIslScheduleOptimizerPass());
+      }
       break;
     }
 

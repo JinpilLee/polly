@@ -24,23 +24,25 @@ class Instruction;
 
 namespace polly {
 class Scop;
+class ScopStmt;
 class SPDIR;
 
 class SPDInstr {
 public:
-  static SPDInstr *get(Instruction *I, SPDIR *IR);
+  static SPDInstr *get(Instruction *I, ScopStmt *Stmt, SPDIR *IR);
 
   bool equal(Instruction *) const;
   bool isDeadInstr() const;
   void dump() const;
 
 private:
-  Instruction *LLVMInstr;
-  SPDIR *ParentIR;
+  const Instruction *LLVMInstr;
+  const ScopStmt *ParentStmt;
+  const SPDIR *ParentIR;
 
   SPDInstr() = delete;
-  SPDInstr(Instruction *I, SPDIR *IR)
-    : LLVMInstr(I), ParentIR(IR) {}
+  SPDInstr(Instruction *I, ScopStmt *Stmt, SPDIR *IR)
+    : LLVMInstr(I), ParentStmt(Stmt), ParentIR(IR) {}
 };
 
 class SPDIR {
