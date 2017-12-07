@@ -13,7 +13,6 @@
 
 #include "polly/LinkAllPasses.h"
 #include "polly/CodeGen/SPDCodeGen.h"
-#include "polly/CodeGen/SPDIR.h"
 
 #define DEBUG_TYPE "polly-ast"
 
@@ -26,7 +25,7 @@ bool SPDCodeGen::runOnScop(Scop &S) {
   if (S.isToBeSkipped())
     return false;
 
-  SPDIR IR(S);
+//  SPDIR IR(S);
 
   return false;
 }

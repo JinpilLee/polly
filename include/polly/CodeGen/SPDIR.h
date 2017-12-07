@@ -16,11 +16,11 @@
 
 #include <vector>
 
-using namespace llvm;
-
 namespace llvm {
 class Instruction;
 } // namespace llvm
+
+using namespace llvm;
 
 namespace polly {
 class Scop;
@@ -29,7 +29,8 @@ class SPDIR;
 
 class SPDInstr {
 public:
-  static SPDInstr *get(Instruction *I, ScopStmt *Stmt, SPDIR *IR);
+  static SPDInstr *get(Instruction *I,
+                       const ScopStmt *Stmt, SPDIR *IR);
 
   bool equal(Instruction *) const;
   bool isDeadInstr() const;
@@ -41,13 +42,13 @@ private:
   const SPDIR *ParentIR;
 
   SPDInstr() = delete;
-  SPDInstr(Instruction *I, ScopStmt *Stmt, SPDIR *IR)
+  SPDInstr(Instruction *I, const ScopStmt *Stmt, SPDIR *IR)
     : LLVMInstr(I), ParentStmt(Stmt), ParentIR(IR) {}
 };
 
 class SPDIR {
 public:
-  SPDIR(Scop &S);
+  SPDIR(const Scop &S);
 
   ~SPDIR() {
     for (SPDInstr *I : InstrList) {

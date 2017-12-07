@@ -20,11 +20,11 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/PassManager.h"
 
-using namespace llvm;
-
 namespace llvm {
 class Function;
 } // namespace llvm
+
+using namespace llvm;
 
 namespace polly {
 class Scop;

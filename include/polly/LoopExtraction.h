@@ -18,11 +18,11 @@
 
 #include "llvm/Analysis/LoopPass.h"
 
-using namespace llvm;
-
 namespace llvm {
 class Loop;
 } // namespace llvm
+
+using namespace llvm;
 
 namespace polly {
 struct LoopExtraction : public LoopPass {

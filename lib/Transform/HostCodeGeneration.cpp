@@ -11,8 +11,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "polly/LinkAllPasses.h"
+#include "polly/CodeGen/SPDIR.h"
 #include "polly/HostCodeGeneration.h"
+#include "polly/LinkAllPasses.h"
 #include "polly/ScopInfo.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IRBuilder.h"
@@ -46,6 +47,9 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
     ValueAsMetadata *VM = dyn_cast<ValueAsMetadata>(Node->getOperand(0));
     const Scop *S
       = getScopFromInstr(dyn_cast<Instruction>(VM->getValue()), SI);
+
+    SPDIR IR(*S);
+
 // FIXME for test
     std::cerr << "Scop INFO --------------------------------\n";
     S->dump();

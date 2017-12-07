@@ -28,7 +28,8 @@
 using namespace llvm;
 using namespace polly;
 
-SPDInstr *SPDInstr::get(Instruction *I, ScopStmt *Stmt, SPDIR *IR) {
+SPDInstr *SPDInstr::get(Instruction *I,
+                        const ScopStmt *Stmt, SPDIR *IR) {
   if (I->mayReadOrWriteMemory()) {
     MemoryAccess *MA = Stmt->getArrayAccessOrNULLFor(I);
     unsigned Num = MA->getNumSubscripts();
@@ -94,8 +95,8 @@ void SPDInstr::dump() const {
   LLVMInstr->dump();
 }
 
-SPDIR::SPDIR(Scop &S) {
-  for (ScopStmt &Stmt : S) {
+SPDIR::SPDIR(const Scop &S) {
+  for (const ScopStmt &Stmt : S) {
     assert(Stmt.isBlockStmt() && "ScopStmt is not a BlockStmt\n");
     BasicBlock *BB = Stmt.getBasicBlock();
 
