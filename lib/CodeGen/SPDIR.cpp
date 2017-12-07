@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "isl/map.h"
 #include "isl/set.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Value.h"
@@ -94,49 +95,43 @@ void SPDInstr::dump() const {
 }
 
 SPDIR::SPDIR(Scop &S) {
-  isl_set *MergedStmtSet = nullptr;
   for (ScopStmt &Stmt : S) {
-    isl_set *CurrentStmtSet = isl_set_reset_tuple_id(Stmt.getDomain());
-
     assert(Stmt.isBlockStmt() && "ScopStmt is not a BlockStmt\n");
     BasicBlock *BB = Stmt.getBasicBlock();
 
-    // TODO init InstrStreamSetList
-    // TODO merge InstrStreamSetList into a single set
+    isl_set *DomainSet = isl_set_reset_tuple_id(Stmt.getDomain());
+    isl_set *StreamSet = isl_set_empty(isl_set_get_space(DomainSet));
     for (BasicBlock::iterator IIB = BB->begin(), IIE = BB->end();
          IIB != IIE; ++IIB) {
       Instruction &I = *IIB;
+      if (I.mayReadOrWriteMemory()) {
+        MemoryAccess *MA = Stmt.getArrayAccessOrNULLFor(&I);
+        assert(MA != nullptr && "cannot find a MemoryAccess");
+
+        isl_map *MAMap = MA->getLatestAccessRelation();
+        MAMap = isl_map_reset_tuple_id(MAMap, isl_dim_in);
+        MAMap = isl_map_reset_tuple_id(MAMap, isl_dim_out);
+
+        isl_set *TempSet = isl_set_empty(isl_set_get_space(DomainSet));
+        TempSet = isl_set_union(TempSet, isl_set_copy(DomainSet));
+        TempSet = isl_set_apply(TempSet, isl_map_copy(MAMap));
+        StreamSet = isl_set_union(StreamSet, isl_set_copy(TempSet));
+        StreamSet = isl_set_remove_redundancies(StreamSet);
+
+        isl_set_free(TempSet);
+        isl_map_free(MAMap);
+      }
+
       SPDInstr *NewInstr = SPDInstr::get(&I, &Stmt, this);
       if (NewInstr != nullptr) {
         InstrList.push_back(NewInstr);
       }
     }
 
-    // FIXME is this a good impl?
-    if (MergedStmtSet == nullptr) {
-      MergedStmtSet = isl_set_copy(CurrentStmtSet);
-    }
-    else {
-      // TODO how handle this?
-      // memory leak here?
-      isl_space *MSpace = isl_set_get_space(MergedStmtSet);
-      isl_space *CSpace = isl_set_get_space(CurrentStmtSet);
-      if (!isl_space_is_equal(MSpace, CSpace)) {
-        llvm_unreachable("space is not equal");
-      }
-
-      isl_space_free(MSpace);
-      isl_space_free(CSpace);
-
-      MergedStmtSet = isl_set_union(MergedStmtSet,
-                                    isl_set_copy(CurrentStmtSet));
-    }
-
-    printf("MergedDomain: %s\n", isl_set_to_str(MergedStmtSet));
-    isl_set_free(CurrentStmtSet);
+    printf("ACC_RANGE: %s\n", isl_set_to_str(StreamSet));
+    isl_set_free(StreamSet);
+    isl_set_free(DomainSet);
   }
-
-  isl_set_free(MergedStmtSet);
 
   removeDeadInstrs();
 }
