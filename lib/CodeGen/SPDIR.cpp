@@ -95,7 +95,46 @@ void SPDInstr::dump() const {
   LLVMInstr->dump();
 }
 
+SPDArrayInfo::SPDArrayInfo(Value *V) : LLVMValue(V) {
+  if (!isa<GlobalVariable>(V)) {
+    llvm_unreachable("MemoryAccess must be a global variable");
+  }
+
+  Type *T = V->getType(); 
+  if (!T->isPointerTy()) {
+    llvm_unreachable("MemoryAccess must be a static array");
+  }
+  else {
+    T = T->getPointerElementType();
+// test
+  T->dump();
+  std::cerr << "KIND: " << T->getTypeID();
+// test
+    if (!T->isArrayTy()) {
+      llvm_unreachable("MemoryAccess must be a static array");
+    }
+  }
+
+  do {
+    ArrayType *ATy = dyn_cast<ArrayType>(T);
+    DimSizeList.push_back(ATy->getNumElements());
+    T = ATy->getElementType();
+  } while (T->isArrayTy());
+
+  if (!T->isFloatTy()) {
+    llvm_unreachable("MemoryAccess must be an array of float");
+  }
+}
+
+void SPDArrayInfo::dump() const {
+  LLVMValue->dump();
+  for (int i = 0; i < getNumDims(); i++) {
+    std::cerr << DimSizeList[i];
+  }
+}
+
 SPDIR::SPDIR(const Scop &S) {
+// Analysis
   for (const ScopStmt &Stmt : S) {
     assert(Stmt.isBlockStmt() && "ScopStmt is not a BlockStmt\n");
     BasicBlock *BB = Stmt.getBasicBlock();
@@ -108,6 +147,8 @@ SPDIR::SPDIR(const Scop &S) {
       if (I.mayReadOrWriteMemory()) {
         MemoryAccess *MA = Stmt.getArrayAccessOrNULLFor(&I);
         assert(MA != nullptr && "cannot find a MemoryAccess");
+
+        addMemoryAccess(MA);
 
         isl_map *MAMap = MA->getLatestAccessRelation();
         MAMap = isl_map_reset_tuple_id(MAMap, isl_dim_in);
@@ -122,19 +163,96 @@ SPDIR::SPDIR(const Scop &S) {
         isl_set_free(TempSet);
         isl_map_free(MAMap);
       }
+    }
 
+//    printf("ACC_RANGE: %s\n", isl_set_to_str(StreamSet));
+    isl_set_free(StreamSet);
+    isl_set_free(DomainSet);
+  }
+
+// IR Generation
+  for (const ScopStmt &Stmt : S) {
+    BasicBlock *BB = Stmt.getBasicBlock();
+    for (BasicBlock::iterator IIB = BB->begin(), IIE = BB->end();
+         IIB != IIE; ++IIB) {
+      Instruction &I = *IIB;
       SPDInstr *NewInstr = SPDInstr::get(&I, &Stmt, this);
       if (NewInstr != nullptr) {
         InstrList.push_back(NewInstr);
       }
     }
-
-    printf("ACC_RANGE: %s\n", isl_set_to_str(StreamSet));
-    isl_set_free(StreamSet);
-    isl_set_free(DomainSet);
   }
 
   removeDeadInstrs();
+}
+
+bool SPDIR::has(Instruction *TargetInstr) const {
+  for (SPDInstr *I : InstrList) {
+    if (I->equal(TargetInstr)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void SPDIR::dump() const {
+  std::cerr << "SPDIR::dump() ---------------------------\n";
+//  for (SPDInstr *I : InstrList) {
+//    I->dump();
+//  }
+  std::cerr << "READ ---------------------------\n";
+  for (SPDArrayInfo *AI : ReadAccesses) {
+    AI->dump();
+  }
+
+  std::cerr << "WRITE --------------------------\n";
+  for (SPDArrayInfo *AI : WriteAccesses) {
+    AI->dump();
+  }
+}
+
+bool SPDIR::reads(Value *V) const {
+  for (SPDArrayInfo *R : ReadAccesses) {
+    if (R->equal(V)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool SPDIR::writes(Value *V) const {
+  for (SPDArrayInfo *W : WriteAccesses) {
+    if (W->equal(V)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void SPDIR::addMemoryAccess(MemoryAccess *MA) {
+  Value *BaseAddr = MA->getOriginalBaseAddr();
+  if (MA->isRead()) {
+    if (writes(BaseAddr)) {
+      llvm_unreachable("READ and WRITE is not allowed");
+    }
+    else if (!reads(BaseAddr)) {
+      ReadAccesses.push_back(new SPDArrayInfo(BaseAddr));
+    }
+  }
+  else if (MA->isWrite()) {
+    if (reads(BaseAddr)) {
+      llvm_unreachable("READ and WRITE is not allowed");
+    }
+    else if (!writes(BaseAddr)) {
+      WriteAccesses.push_back(new SPDArrayInfo(BaseAddr));
+    }
+  }
+  else {
+    llvm_unreachable("MemoryAccess is not read/write");
+  }
 }
 
 void SPDIR::removeDeadInstrs() {
@@ -153,19 +271,3 @@ void SPDIR::removeDeadInstrs() {
   } while (ContinueRemove);
 }
 
-bool SPDIR::has(Instruction *TargetInstr) const {
-  for (SPDInstr *I : InstrList) {
-    if (I->equal(TargetInstr)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-void SPDIR::dump() const {
-  std::cerr << "SPDIR::dump() ---------------------------\n";
-  for (SPDInstr *I : InstrList) {
-    I->dump();
-  }
-}

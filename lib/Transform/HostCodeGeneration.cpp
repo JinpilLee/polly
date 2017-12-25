@@ -49,6 +49,10 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
       = getScopFromInstr(dyn_cast<Instruction>(VM->getValue()), SI);
 
     SPDIR IR(*S);
+    for (auto Iter = IR.read_begin(); Iter != IR.read_end(); Iter++) {
+      SPDArrayInfo *AI = *Iter;
+      AI->dump();
+    }
 
 // FIXME for test
     std::cerr << "Scop INFO --------------------------------\n";
