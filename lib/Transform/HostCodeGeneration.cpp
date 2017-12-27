@@ -39,6 +39,82 @@ const Scop *HostCodeGeneration::getScopFromInstr(Instruction *Instr,
   llvm_unreachable("cannot find a scop");
 }
 
+static void createCopyInFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB) {
+  Type *RetTy = Type::getVoidTy(M.getContext());
+  Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
+  Type *Int32Ty = Type::getInt32Ty(M.getContext());
+  Type *Int64Ty = Type::getInt64Ty(M.getContext());
+
+  Value *Func = nullptr;
+  int StreamNumDims = IR.getStreamNumDims();
+  switch (StreamNumDims) {
+  default:
+    llvm_unreachable("Stream must be 1D/2D/3D");
+  case 1:
+    Func = M.getOrInsertFunction("__spd_copy_in_1D", RetTy,
+                                 Int32Ty,
+                                 FloatPtrTy, Int64Ty);
+    break;
+  case 2:
+    Func = M.getOrInsertFunction("__spd_copy_in_2D", RetTy,
+                                 Int32Ty,
+                                 FloatPtrTy, Int64Ty, Int64Ty);
+    break;
+  case 3:
+    Func = M.getOrInsertFunction("__spd_copy_in_3D", RetTy,
+                                 Int32Ty,
+                                 FloatPtrTy, Int64Ty, Int64Ty, Int64Ty);
+    break;
+  }
+
+  uint32_t Offset = 0;
+  for (auto Iter = IR.read_begin(); Iter != IR.read_end(); Iter++) {
+    SmallVector<Value *, 8> Args;
+
+    Args.push_back(IRB.getInt32(Offset));
+
+    SPDArrayInfo *AI = *Iter;
+    Value *ArrayRef = AI->getArrayRef();
+    ArrayRef = IRB.CreatePointerCast(ArrayRef, FloatPtrTy);
+    Args.push_back(ArrayRef);
+    for (uint64_t DimSize : *AI) {
+      Args.push_back(IRB.getInt64(DimSize));
+    }
+
+    Value *Ref = AI->getArrayRef();
+    IRB.CreateCall(Func, Args);
+    Offset++;
+  }
+}
+
+static void createCopyOutFunc(SPDIR &IR, Module &M, IRBuilder<> &Builder) {
+  Type *RetTy = Type::getVoidTy(M.getContext());
+  Type *ArgTy = Type::getInt32Ty(M.getContext());
+  Value *RuntimeFunc = nullptr;
+
+  RuntimeFunc = M.getOrInsertFunction("__spd_run_kernel",
+                                      RetTy,
+                                      ArgTy, ArgTy, ArgTy);
+
+  Builder.CreateCall(RuntimeFunc,
+                     {ConstantInt::get(ArgTy, 0),
+                      ConstantInt::get(ArgTy, 1),
+                      ConstantInt::get(ArgTy, 2)});
+}
+
+static void createRunKernelFunc(SPDIR &IR, Module &M, IRBuilder<> &Builder) {
+  Type *RetTy = Type::getVoidTy(M.getContext());
+  Type *ArgTy = Type::getInt32Ty(M.getContext());
+  Value *RuntimeFunc = nullptr;
+
+  RuntimeFunc = M.getOrInsertFunction("__spd_copy_out",
+                                      RetTy,
+                                      ArgTy);
+ 
+  Builder.CreateCall(RuntimeFunc,
+                     {ConstantInt::get(ArgTy, 0)});
+}
+
 bool HostCodeGeneration::runOnFunction(Function &F) {
   ScopInfo *SI = getAnalysis<ScopInfoWrapperPass>().getSI();
   bool Changed = false;
@@ -49,15 +125,6 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
       = getScopFromInstr(dyn_cast<Instruction>(VM->getValue()), SI);
 
     SPDIR IR(*S);
-    for (auto Iter = IR.read_begin(); Iter != IR.read_end(); Iter++) {
-      SPDArrayInfo *AI = *Iter;
-      AI->dump();
-    }
-
-// FIXME for test
-    std::cerr << "Scop INFO --------------------------------\n";
-    S->dump();
-    std::cerr << "Scop INFO END ----------------------------\n";
 
     // FIXME consider better impl than using counter
     unsigned InstCount = 0;
@@ -68,37 +135,14 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
       CallInst *Caller = dyn_cast<CallInst>(U->getUser());
       assert(Caller != nullptr && "user should be a function call");
 
-// -----------------------------------
-// FIXME return type sould be void
       Module *M = F.getParent();
-      Type *RetTy = Type::getVoidTy(M->getContext());
-      Type *ArgTy = Type::getInt32Ty(M->getContext());
       IRBuilder<> Builder(Caller);
 
-      Value *RuntimeFunc = nullptr;
-      RuntimeFunc = M->getOrInsertFunction("__spd_copy_in",
-                                           RetTy,
-                                           ArgTy, ArgTy);
-      Builder.CreateCall(RuntimeFunc,
-                         {ConstantInt::get(ArgTy, 0),
-                          ConstantInt::get(ArgTy, 1)});
-
-      RuntimeFunc = M->getOrInsertFunction("__spd_run_kernel",
-                                           RetTy,
-                                           ArgTy, ArgTy, ArgTy);
-      Builder.CreateCall(RuntimeFunc,
-                         {ConstantInt::get(ArgTy, 0),
-                          ConstantInt::get(ArgTy, 1),
-                          ConstantInt::get(ArgTy, 2)});
-
-      RuntimeFunc = M->getOrInsertFunction("__spd_copy_out",
-                                           RetTy,
-                                           ArgTy);
-      Builder.CreateCall(RuntimeFunc,
-                         {ConstantInt::get(ArgTy, 0)});
+      createCopyInFunc(IR, *M, Builder);
+      createCopyOutFunc(IR, *M, Builder);
+      createRunKernelFunc(IR, *M, Builder);
 
       Caller->eraseFromParent();
-// -----------------------------------
 
       Changed = true;
     }

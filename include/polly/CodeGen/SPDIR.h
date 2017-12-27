@@ -55,6 +55,8 @@ public:
 
   bool equal(Value *V) const { return V == LLVMValue; }
   int getNumDims() const { return DimSizeList.size(); }
+  Value *getArrayRef() const { return LLVMValue; }
+
   typedef std::vector<std::uint64_t>::const_iterator const_iterator;
   const_iterator begin() const { return DimSizeList.begin(); }
   const_iterator end() const { return DimSizeList.end(); }
@@ -63,6 +65,20 @@ public:
 
 private:
   Value *LLVMValue;
+  std::vector<std::uint64_t> DimSizeList;
+};
+
+class SPDStreamInfo {
+public:
+  SPDStreamInfo(int NumDims, uint64_t *L);
+
+  int getNumDims() const { return DimSizeList.size(); }
+
+  typedef std::vector<std::uint64_t>::const_iterator const_iterator;
+  const_iterator begin() const { return DimSizeList.begin(); }
+  const_iterator end() const { return DimSizeList.end(); }
+
+private:
   std::vector<std::uint64_t> DimSizeList;
 };
 
@@ -82,6 +98,8 @@ public:
     for (SPDArrayInfo *AI : WriteAccesses) {
       delete AI;
     }
+
+    delete SI;
   }
 
   bool has(Instruction *I) const;
@@ -92,16 +110,23 @@ public:
   const_iterator write_begin() const { return WriteAccesses.begin(); };
   const_iterator write_end() const { return WriteAccesses.end(); };
 
+  typedef std::vector<std::uint64_t>::const_iterator stream_const_iterator;
+  stream_const_iterator stream_begin() const { return SI->begin(); }
+  stream_const_iterator stream_end() const { return SI->end(); }
+  int getStreamNumDims() const { return SI->getNumDims(); }
+
   void dump() const;
 
 private:
   std::vector<SPDInstr *> InstrList;
   std::vector<SPDArrayInfo *> ReadAccesses;
   std::vector<SPDArrayInfo *> WriteAccesses;
+  SPDStreamInfo *SI;
 
   bool reads(Value *V) const;
   bool writes(Value *V) const;
-  void addMemoryAccess(MemoryAccess *MA);
+  void addMemoryAccess(const MemoryAccess *MA);
+  void createStreamInfo();
   void removeDeadInstrs();
 };
 } // end namespace polly

@@ -101,23 +101,16 @@ SPDArrayInfo::SPDArrayInfo(Value *V) : LLVMValue(V) {
   }
 
   Type *T = V->getType(); 
-  if (!T->isPointerTy()) {
+  assert(T->isPointerTy() && "MemoryAccess must be a static array");
+ 
+  T = T->getPointerElementType();
+  if (!T->isArrayTy()) {
     llvm_unreachable("MemoryAccess must be a static array");
-  }
-  else {
-    T = T->getPointerElementType();
-// test
-  T->dump();
-  std::cerr << "KIND: " << T->getTypeID();
-// test
-    if (!T->isArrayTy()) {
-      llvm_unreachable("MemoryAccess must be a static array");
-    }
   }
 
   do {
     ArrayType *ATy = dyn_cast<ArrayType>(T);
-    DimSizeList.push_back(ATy->getNumElements());
+    DimSizeList.insert(DimSizeList.begin(), ATy->getNumElements());
     T = ATy->getElementType();
   } while (T->isArrayTy());
 
@@ -129,12 +122,47 @@ SPDArrayInfo::SPDArrayInfo(Value *V) : LLVMValue(V) {
 void SPDArrayInfo::dump() const {
   LLVMValue->dump();
   for (int i = 0; i < getNumDims(); i++) {
-    std::cerr << DimSizeList[i];
+    std::cerr << DimSizeList[i] << "\n";
+  }
+}
+
+SPDStreamInfo::SPDStreamInfo(int NumDims, uint64_t *L) {
+  for (int i = 0; i < NumDims; i++) {
+    DimSizeList.push_back(L[i]);
   }
 }
 
 SPDIR::SPDIR(const Scop &S) {
 // Analysis
+  for (const ScopStmt &Stmt : S) {
+    for (const MemoryAccess *MA : Stmt) {
+      addMemoryAccess(MA);
+    }
+  }
+
+  createStreamInfo();
+
+/*
+  isl_space *Space = S.getParamSpace();
+  isl_union_map *Read = isl_union_map_empty(isl_space_copy(Space));
+  for (const ScopStmt &Stmt : S) {
+    for (const MemoryAccess *MA : Stmt) {
+      isl_set *StmtDomain = Stmt.getDomain();
+      isl_map *AccDomain = MA->getLatestAccessRelation();
+      AccDomain = isl_map_intersect_domain(AccDomain, StmtDomain);
+      printf("ACC_DOMAIN: %s\n", isl_map_to_str(AccDomain));
+      Read = isl_union_map_add_map(Read, AccDomain);
+      printf("READ: %s\n", isl_union_map_to_str(Read));
+    }
+  }
+
+  Read = isl_union_map_coalesce(Read);
+  printf("READ: %s\n", isl_union_map_to_str(Read));
+
+  isl_space_free(Space);
+  isl_union_map_free(Read);
+*/
+/*
   for (const ScopStmt &Stmt : S) {
     assert(Stmt.isBlockStmt() && "ScopStmt is not a BlockStmt\n");
     BasicBlock *BB = Stmt.getBasicBlock();
@@ -169,6 +197,7 @@ SPDIR::SPDIR(const Scop &S) {
     isl_set_free(StreamSet);
     isl_set_free(DomainSet);
   }
+*/
 
 // IR Generation
   for (const ScopStmt &Stmt : S) {
@@ -198,9 +227,9 @@ bool SPDIR::has(Instruction *TargetInstr) const {
 
 void SPDIR::dump() const {
   std::cerr << "SPDIR::dump() ---------------------------\n";
-//  for (SPDInstr *I : InstrList) {
-//    I->dump();
-//  }
+  for (SPDInstr *I : InstrList) {
+    I->dump();
+  }
   std::cerr << "READ ---------------------------\n";
   for (SPDArrayInfo *AI : ReadAccesses) {
     AI->dump();
@@ -232,7 +261,7 @@ bool SPDIR::writes(Value *V) const {
   return false;
 }
 
-void SPDIR::addMemoryAccess(MemoryAccess *MA) {
+void SPDIR::addMemoryAccess(const MemoryAccess *MA) {
   Value *BaseAddr = MA->getOriginalBaseAddr();
   if (MA->isRead()) {
     if (writes(BaseAddr)) {
@@ -255,6 +284,66 @@ void SPDIR::addMemoryAccess(MemoryAccess *MA) {
   }
 }
 
+void SPDIR::createStreamInfo() {
+  int NumDims = 0;
+  for (auto Iter = read_begin(); Iter != read_end(); Iter++) {
+    SPDArrayInfo *AI = *Iter;
+    if (NumDims == 0) {
+      NumDims = AI->getNumDims();
+    }
+    else {
+      if (NumDims != AI->getNumDims()) {
+        llvm_unreachable("Array dimension mush be the same");
+      }
+    }
+  }
+
+  for (auto Iter = write_begin(); Iter != write_end(); Iter++) {
+    SPDArrayInfo *AI = *Iter;
+    if (NumDims == 0) {
+      NumDims = AI->getNumDims();
+    }
+    else {
+      if (NumDims!= AI->getNumDims()) {
+        llvm_unreachable("Array dimension mush be the same");
+      }
+    }
+  }
+
+  uint64_t *DimSizeArray = new uint64_t[NumDims];
+  for (int i = 0; i < NumDims; i++) {
+    DimSizeArray[i] = 0;
+  }
+
+  for (auto Iter = read_begin(); Iter != read_end(); Iter++) {
+    SPDArrayInfo *AI = *Iter;
+    int Idx = 0;
+    for (uint64_t DimSize : *AI) {
+      if (DimSize > DimSizeArray[Idx]) {
+        DimSizeArray[Idx] = DimSize;
+      }
+
+      Idx++;
+    }
+  }
+
+  for (auto Iter = write_begin(); Iter != write_end(); Iter++) {
+    SPDArrayInfo *AI = *Iter;
+    int Idx = 0;
+    for (uint64_t DimSize : *AI) {
+      if (DimSize > DimSizeArray[Idx]) {
+        DimSizeArray[Idx] = DimSize;
+      }
+
+      Idx++;
+    }
+  }
+
+  SI = new SPDStreamInfo(NumDims, DimSizeArray);
+
+  delete[] DimSizeArray;
+}
+
 void SPDIR::removeDeadInstrs() {
   bool ContinueRemove = false;
   do {
@@ -270,4 +359,3 @@ void SPDIR::removeDeadInstrs() {
     }
   } while (ContinueRemove);
 }
-
