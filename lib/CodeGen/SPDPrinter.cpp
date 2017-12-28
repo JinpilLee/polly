@@ -1,8 +1,57 @@
+#include "polly/ScopInfo.h"
 #include "polly/CodeGen/SPDPrinter.h"
 #include <iostream>
 
 using namespace llvm;
 using namespace polly;
+
+void SPDPrinter::emitInParams() {
+  if (IR->getNumReads() == 0) return;
+
+  *OS << "Main_In   {Mi::";
+  auto Iter = IR->read_begin();
+  while (true) {
+    SPDArrayInfo *AI = *Iter;
+    *OS << AI->getArrayRef()->getName().str();
+
+    Iter++;
+    if (Iter == IR->read_end()) {
+      *OS << "};\n";
+      break;
+    }
+    else {
+      *OS << ", ";
+    }
+  }
+}
+
+void SPDPrinter::emitOutParams() {
+  if (IR->getNumWrites() == 0) return;
+
+  *OS << "Main_Out  {Mo::";
+  auto Iter = IR->write_begin();
+  while (true) {
+    SPDArrayInfo *AI = *Iter;
+    *OS << AI->getArrayRef()->getName().str();
+
+    Iter++;
+    if (Iter == IR->write_end()) {
+      *OS << "};\n";
+      break;
+    }
+    else {
+      *OS << ", ";
+    }
+  }
+}
+
+void SPDPrinter::emitModuleDecl() {
+// FIXME needs name
+  *OS << "Name      " << "UNKNOWN" << ";\n";
+
+  emitInParams();
+  emitOutParams();
+}
 
 // copied from WriteConstantInternal()@IR/AsmPrinter.cpp
 void SPDPrinter::emitConstantInt(ConstantInt *CI) {
@@ -95,16 +144,9 @@ unsigned SPDPrinter::getValueNum(Value *V) {
 void SPDPrinter::emitValue(Value *V) {
   MemInstrMapTy::iterator Iter = MemInstrMap.find(V);
   if (Iter != MemInstrMap.end()) {
-    Instruction *Instr = dyn_cast<Instruction>(Iter->second);
-    MemoryAccess *MA = TargetStmt->getArrayAccessOrNULLFor(Instr);
-    *OS << MA->getOriginalBaseAddr()->getName().str();
-
     // FIXME we need to consider array subscript
-    std::cerr << "ACCESS: " << MA->getOriginalBaseAddr()->getName().str() << "\n";
-    unsigned Num = MA->getNumSubscripts();
-    for (unsigned i = 0; i < Num; i++) {
-      MA->getSubscript(i)->dump();
-    }
+    MemoryAccess *MA = Iter->second;
+    *OS << MA->getOriginalBaseAddr()->getName().str();
   }
   else if (isa<ConstantInt>(V)) {
     emitConstantInt(dyn_cast<ConstantInt>(V));
@@ -149,50 +191,47 @@ void SPDPrinter::emitEQUPrefix() {
     EQUCount++;
 }
 
-void SPDPrinter::emitInstruction(Instruction &Instr) {
-  if (Instr.mayReadFromMemory()) {
-    MemInstrMap[dyn_cast<Value>(&Instr)] = &Instr;
+void SPDPrinter::emitInstruction(SPDInstr *I) {
+  Instruction *Instr = I->getLLVMInstr();
+  if (Instr->mayReadFromMemory()) {
+    MemInstrMap[dyn_cast<Value>(Instr)] = I->getMemoryAccess();
   }
-  else if (Instr.mayWriteToMemory()) {
+  else if (Instr->mayWriteToMemory()) {
     emitEQUPrefix();
-    MemoryAccess *MA = TargetStmt->getArrayAccessOrNULLFor(&Instr);
+    MemoryAccess *MA = I->getMemoryAccess();
     *OS << MA->getOriginalBaseAddr()->getName().str();
     *OS << " = ";
-    emitValue(Instr.getOperand(0));
+    emitValue(Instr->getOperand(0));
     *OS << ";\n";
   }
-  else if (Instr.isBinaryOp()) {
+  else if (Instr->isBinaryOp()) {
     emitEQUPrefix();
-    emitValue(dyn_cast<Value>(&Instr));
+    emitValue(dyn_cast<Value>(Instr));
     *OS << " = ";
-    emitValue(Instr.getOperand(0));
-    emitOpcode(Instr.getOpcode());
-    emitValue(Instr.getOperand(1));
+    emitValue(Instr->getOperand(0));
+    emitOpcode(Instr->getOpcode());
+    emitValue(Instr->getOperand(1));
     *OS << ";\n";
   }
-// FIXME ignore or handle all?
-//  else {
-//    llvm_unreachable("unsupported instruction");
-//  }
+  else {
+    llvm_unreachable("unsupported instruction");
+  }
 }
 
-SPDPrinter::SPDPrinter(ScopStmt *Stmt)
-  : TargetStmt(Stmt), EQUCount(0), ValueCount(0) {
-  Scop *P = Stmt->getParent();
-
-  if (!Stmt->isBlockStmt()) return;
-
+SPDPrinter::SPDPrinter(SPDIR *I)
+  : IR(I), EQUCount(0), ValueCount(0) {
   std::error_code EC;
   OS = new raw_fd_ostream("temp.spd", EC, sys::fs::F_None);
   if (EC) {
     std::cerr << "cannot create a output file";
   }
 
+  *OS << "// module declaration\n";
+  emitModuleDecl();
+
   *OS << "// equation\n";
-  BasicBlock *BB = Stmt->getBasicBlock();
-  for (BasicBlock::iterator IIB = BB->begin(), IIE = BB->end();
-       IIB != IIE; ++IIB) {
-    Instruction &Instr = *IIB;
+  for (auto Iter = IR->instr_begin(); Iter != IR->instr_end(); Iter++) {
+    SPDInstr *Instr = *Iter;
     emitInstruction(Instr);
   }
 }

@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "polly/CodeGen/SPDIR.h"
+#include "polly/CodeGen/SPDPrinter.h"
 #include "polly/HostCodeGeneration.h"
 #include "polly/LinkAllPasses.h"
 #include "polly/ScopInfo.h"
@@ -26,6 +27,141 @@ using namespace polly;
 
 #define DEBUG_TYPE "polly-host-codegen"
 
+static void generateSPDFromIR(SPDIR &IR) {
+  ;
+}
+
+static Value *createAllocStreamFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB) {
+  Type *RetTy = Type::getFloatPtrTy(M.getContext());
+  Type *Int64Ty = Type::getInt64Ty(M.getContext());
+  Value *Func = M.getOrInsertFunction("__spd_alloc_stream", RetTy, Int64Ty);
+  return IRB.CreateCall(Func, {IRB.getInt64(IR.getStreamAllocSize())});
+}
+
+static uint32_t createCopyInFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
+                                 Value *StreamBuffer) {
+  Type *RetTy = Type::getVoidTy(M.getContext());
+  Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
+  Type *Int32Ty = Type::getInt32Ty(M.getContext());
+  Type *Int64Ty = Type::getInt64Ty(M.getContext());
+
+  Value *Func = nullptr;
+  int StreamNumDims = IR.getStreamNumDims();
+  switch (StreamNumDims) {
+  default:
+    llvm_unreachable("Stream must be 1D/2D/3D");
+  case 1:
+    Func = M.getOrInsertFunction("__spd_copy_in_1D", RetTy,
+                                 FloatPtrTy, Int32Ty, Int32Ty,
+                                 FloatPtrTy, Int64Ty);
+    break;
+  case 2:
+    Func = M.getOrInsertFunction("__spd_copy_in_2D", RetTy,
+                                 FloatPtrTy, Int32Ty, Int32Ty,
+                                 FloatPtrTy, Int64Ty, Int64Ty);
+    break;
+  case 3:
+    Func = M.getOrInsertFunction("__spd_copy_in_3D", RetTy,
+                                 FloatPtrTy, Int32Ty, Int32Ty,
+                                 FloatPtrTy, Int64Ty, Int64Ty, Int64Ty);
+    break;
+  }
+
+  uint32_t Offset = 0;
+  for (auto Iter = IR.read_begin(); Iter != IR.read_end(); Iter++) {
+    SmallVector<Value *, 8> Args;
+
+    Args.push_back(StreamBuffer);
+    Args.push_back(IRB.getInt32(Offset));
+    Args.push_back(IRB.getInt32(IR.getStreamStride()));
+
+    SPDArrayInfo *AI = *Iter;
+    Value *ArrayRef = AI->getArrayRef();
+    ArrayRef = IRB.CreatePointerCast(ArrayRef, FloatPtrTy);
+    Args.push_back(ArrayRef);
+    for (uint64_t DimSize : *AI) {
+      Args.push_back(IRB.getInt64(DimSize));
+    }
+
+    IRB.CreateCall(Func, Args);
+    Offset++;
+  }
+
+  return Offset;
+}
+
+static void createRunKernelFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB) {
+  Type *RetTy = Type::getVoidTy(M.getContext());
+  Type *ArgTy = Type::getInt32Ty(M.getContext());
+  Value *Func = nullptr;
+
+  Func = M.getOrInsertFunction("__spd_run_kernel",
+                               RetTy, ArgTy, ArgTy, ArgTy);
+
+  IRB.CreateCall(Func,
+                 {ConstantInt::get(ArgTy, 0),
+                  ConstantInt::get(ArgTy, 1),
+                  ConstantInt::get(ArgTy, 2)});
+}
+
+static void createCopyOutFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
+                              Value *StreamBuffer, uint32_t Offset) {
+  Type *RetTy = Type::getVoidTy(M.getContext());
+  Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
+  Type *Int32Ty = Type::getInt32Ty(M.getContext());
+  Type *Int64Ty = Type::getInt64Ty(M.getContext());
+
+  Value *Func = nullptr;
+  int StreamNumDims = IR.getStreamNumDims();
+  switch (StreamNumDims) {
+  default:
+    llvm_unreachable("Stream must be 1D/2D/3D");
+  case 1:
+    Func = M.getOrInsertFunction("__spd_copy_out_1D", RetTy,
+                                 FloatPtrTy, Int32Ty, Int32Ty,
+                                 FloatPtrTy, Int64Ty);
+    break;
+  case 2:
+    Func = M.getOrInsertFunction("__spd_copy_out_2D", RetTy,
+                                 FloatPtrTy, Int32Ty, Int32Ty,
+                                 FloatPtrTy, Int64Ty, Int64Ty);
+    break;
+  case 3:
+    Func = M.getOrInsertFunction("__spd_copy_out_3D", RetTy,
+                                 FloatPtrTy, Int32Ty, Int32Ty,
+                                 FloatPtrTy, Int64Ty, Int64Ty, Int64Ty);
+    break;
+  }
+
+  for (auto Iter = IR.write_begin(); Iter != IR.write_end(); Iter++) {
+    SmallVector<Value *, 8> Args;
+
+    Args.push_back(StreamBuffer);
+    Args.push_back(IRB.getInt32(Offset));
+    Args.push_back(IRB.getInt32(IR.getStreamStride()));
+
+    SPDArrayInfo *AI = *Iter;
+    Value *ArrayRef = AI->getArrayRef();
+    ArrayRef = IRB.CreatePointerCast(ArrayRef, FloatPtrTy);
+    Args.push_back(ArrayRef);
+    for (uint64_t DimSize : *AI) {
+      Args.push_back(IRB.getInt64(DimSize));
+    }
+
+    IRB.CreateCall(Func, Args);
+    Offset++;
+  }
+}
+
+static void createFreeStreamFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
+                                 Value *StreamBuffer) {
+  Type *RetTy = Type::getVoidTy(M.getContext());
+  Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
+
+  Value *Func = M.getOrInsertFunction("__spd_free_stream", RetTy, FloatPtrTy);
+  IRB.CreateCall(Func, {StreamBuffer});
+}
+
 const Scop *HostCodeGeneration::getScopFromInstr(Instruction *Instr,
                                                  ScopInfo *SI) const {
   BasicBlock *BB = Instr->getParent();
@@ -39,82 +175,6 @@ const Scop *HostCodeGeneration::getScopFromInstr(Instruction *Instr,
   llvm_unreachable("cannot find a scop");
 }
 
-static void createCopyInFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB) {
-  Type *RetTy = Type::getVoidTy(M.getContext());
-  Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
-  Type *Int32Ty = Type::getInt32Ty(M.getContext());
-  Type *Int64Ty = Type::getInt64Ty(M.getContext());
-
-  Value *Func = nullptr;
-  int StreamNumDims = IR.getStreamNumDims();
-  switch (StreamNumDims) {
-  default:
-    llvm_unreachable("Stream must be 1D/2D/3D");
-  case 1:
-    Func = M.getOrInsertFunction("__spd_copy_in_1D", RetTy,
-                                 Int32Ty,
-                                 FloatPtrTy, Int64Ty);
-    break;
-  case 2:
-    Func = M.getOrInsertFunction("__spd_copy_in_2D", RetTy,
-                                 Int32Ty,
-                                 FloatPtrTy, Int64Ty, Int64Ty);
-    break;
-  case 3:
-    Func = M.getOrInsertFunction("__spd_copy_in_3D", RetTy,
-                                 Int32Ty,
-                                 FloatPtrTy, Int64Ty, Int64Ty, Int64Ty);
-    break;
-  }
-
-  uint32_t Offset = 0;
-  for (auto Iter = IR.read_begin(); Iter != IR.read_end(); Iter++) {
-    SmallVector<Value *, 8> Args;
-
-    Args.push_back(IRB.getInt32(Offset));
-
-    SPDArrayInfo *AI = *Iter;
-    Value *ArrayRef = AI->getArrayRef();
-    ArrayRef = IRB.CreatePointerCast(ArrayRef, FloatPtrTy);
-    Args.push_back(ArrayRef);
-    for (uint64_t DimSize : *AI) {
-      Args.push_back(IRB.getInt64(DimSize));
-    }
-
-    Value *Ref = AI->getArrayRef();
-    IRB.CreateCall(Func, Args);
-    Offset++;
-  }
-}
-
-static void createCopyOutFunc(SPDIR &IR, Module &M, IRBuilder<> &Builder) {
-  Type *RetTy = Type::getVoidTy(M.getContext());
-  Type *ArgTy = Type::getInt32Ty(M.getContext());
-  Value *RuntimeFunc = nullptr;
-
-  RuntimeFunc = M.getOrInsertFunction("__spd_run_kernel",
-                                      RetTy,
-                                      ArgTy, ArgTy, ArgTy);
-
-  Builder.CreateCall(RuntimeFunc,
-                     {ConstantInt::get(ArgTy, 0),
-                      ConstantInt::get(ArgTy, 1),
-                      ConstantInt::get(ArgTy, 2)});
-}
-
-static void createRunKernelFunc(SPDIR &IR, Module &M, IRBuilder<> &Builder) {
-  Type *RetTy = Type::getVoidTy(M.getContext());
-  Type *ArgTy = Type::getInt32Ty(M.getContext());
-  Value *RuntimeFunc = nullptr;
-
-  RuntimeFunc = M.getOrInsertFunction("__spd_copy_out",
-                                      RetTy,
-                                      ArgTy);
- 
-  Builder.CreateCall(RuntimeFunc,
-                     {ConstantInt::get(ArgTy, 0)});
-}
-
 bool HostCodeGeneration::runOnFunction(Function &F) {
   ScopInfo *SI = getAnalysis<ScopInfoWrapperPass>().getSI();
   bool Changed = false;
@@ -125,6 +185,7 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
       = getScopFromInstr(dyn_cast<Instruction>(VM->getValue()), SI);
 
     SPDIR IR(*S);
+    SPDPrinter Print(&IR);
 
     // FIXME consider better impl than using counter
     unsigned InstCount = 0;
@@ -138,9 +199,11 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
       Module *M = F.getParent();
       IRBuilder<> Builder(Caller);
 
-      createCopyInFunc(IR, *M, Builder);
-      createCopyOutFunc(IR, *M, Builder);
+      Value *StreamBuffer = createAllocStreamFunc(IR, *M, Builder);
+      uint32_t Offset = createCopyInFunc(IR, *M, Builder, StreamBuffer);
       createRunKernelFunc(IR, *M, Builder);
+      createCopyOutFunc(IR, *M, Builder, StreamBuffer, Offset);
+      createFreeStreamFunc(IR, *M, Builder, StreamBuffer);
 
       Caller->eraseFromParent();
 

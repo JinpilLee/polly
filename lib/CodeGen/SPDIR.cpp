@@ -95,6 +95,10 @@ void SPDInstr::dump() const {
   LLVMInstr->dump();
 }
 
+MemoryAccess *SPDInstr::getMemoryAccess() const {
+  return ParentStmt->getArrayAccessOrNULLFor(LLVMInstr);
+}
+
 SPDArrayInfo::SPDArrayInfo(Value *V) : LLVMValue(V) {
   if (!isa<GlobalVariable>(V)) {
     llvm_unreachable("MemoryAccess must be a global variable");
@@ -126,7 +130,8 @@ void SPDArrayInfo::dump() const {
   }
 }
 
-SPDStreamInfo::SPDStreamInfo(int NumDims, uint64_t *L) {
+SPDStreamInfo::SPDStreamInfo(uint32_t NumArrays, int NumDims, uint64_t *L)
+  : Stride(NumArrays) {
   for (int i = 0; i < NumDims; i++) {
     DimSizeList.push_back(L[i]);
   }
@@ -315,8 +320,10 @@ void SPDIR::createStreamInfo() {
     DimSizeArray[i] = 0;
   }
 
+  uint32_t NumArrays = 0;
   for (auto Iter = read_begin(); Iter != read_end(); Iter++) {
     SPDArrayInfo *AI = *Iter;
+    NumArrays++;
     int Idx = 0;
     for (uint64_t DimSize : *AI) {
       if (DimSize > DimSizeArray[Idx]) {
@@ -329,6 +336,7 @@ void SPDIR::createStreamInfo() {
 
   for (auto Iter = write_begin(); Iter != write_end(); Iter++) {
     SPDArrayInfo *AI = *Iter;
+    NumArrays++;
     int Idx = 0;
     for (uint64_t DimSize : *AI) {
       if (DimSize > DimSizeArray[Idx]) {
@@ -339,7 +347,7 @@ void SPDIR::createStreamInfo() {
     }
   }
 
-  SI = new SPDStreamInfo(NumDims, DimSizeArray);
+  SI = new SPDStreamInfo(NumArrays, NumDims, DimSizeArray);
 
   delete[] DimSizeArray;
 }

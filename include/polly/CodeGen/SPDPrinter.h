@@ -23,18 +23,19 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
-#include "polly/ScopInfo.h"
+#include "polly/CodeGen/SPDIR.h"
 #include <map>
 
 using namespace llvm;
 
-typedef std::map<Value *, unsigned>      CalcInstrMapTy;
-typedef std::map<Value *, Instruction *> MemInstrMapTy;
-
 namespace polly {
+
+typedef std::map<Value *, unsigned>       CalcInstrMapTy;
+typedef std::map<Value *, MemoryAccess *> MemInstrMapTy;
+
 class SPDPrinter {
 public:
-  SPDPrinter(ScopStmt *Stmt);
+  SPDPrinter(SPDIR *I);
   ~SPDPrinter();
 
 // FIXME
@@ -42,16 +43,19 @@ public:
 
 private:
   SPDPrinter() = delete;
+  void emitInParams();
+  void emitOutParams();
+  void emitModuleDecl();
   void emitConstantInt(ConstantInt *CI);
   void emitConstantFP(ConstantFP *CFP);
   unsigned getValueNum(Value *V);
   void emitValue(Value *V);
   void emitOpcode(unsigned Opcode);
   void emitEQUPrefix();
-  void emitInstruction(Instruction &Instr);
+  void emitInstruction(SPDInstr *Instr);
 
-  ScopStmt *TargetStmt;
   raw_fd_ostream *OS;
+  SPDIR *IR;
 
   unsigned EQUCount;
   unsigned HDLCount;
