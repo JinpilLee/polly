@@ -53,8 +53,9 @@ private:
 
 class SPDArrayInfo {
 public:
-  SPDArrayInfo(Value *V);
+  SPDArrayInfo(Value *V, int O);
 
+  int getOffset() const { return Offset; }
   bool equal(Value *V) const { return V == LLVMValue; }
   int getNumDims() const { return DimSizeList.size(); }
   Value *getArrayRef() const { return LLVMValue; }
@@ -66,6 +67,7 @@ public:
   void dump() const;
 
 private:
+  int Offset;
   Value *LLVMValue;
   std::vector<std::uint64_t> DimSizeList;
 };
@@ -140,6 +142,7 @@ public:
   void dump() const;
 
 private:
+  int AIOffset;
   int KernelNum;
   std::vector<SPDInstr *> InstrList;
   std::vector<SPDArrayInfo *> ReadAccesses;
@@ -148,7 +151,8 @@ private:
 
   bool reads(Value *V) const;
   bool writes(Value *V) const;
-  void addMemoryAccess(const MemoryAccess *MA);
+  void addReadAccess(const MemoryAccess *MA);
+  void addWriteAccess(const MemoryAccess *MA);
   void createStreamInfo();
   void removeDeadInstrs();
 };

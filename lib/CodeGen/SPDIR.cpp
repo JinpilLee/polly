@@ -101,7 +101,7 @@ MemoryAccess *SPDInstr::getMemoryAccess() const {
   return ParentStmt->getArrayAccessOrNULLFor(LLVMInstr);
 }
 
-SPDArrayInfo::SPDArrayInfo(Value *V) : LLVMValue(V) {
+SPDArrayInfo::SPDArrayInfo(Value *V, int O) : Offset(O), LLVMValue(V) {
   if (!isa<GlobalVariable>(V)) {
     llvm_unreachable("MemoryAccess must be a global variable");
   }
@@ -140,13 +140,19 @@ SPDStreamInfo::SPDStreamInfo(uint32_t NumArrays, int NumDims, uint64_t *L)
 }
 
 SPDIR::SPDIR(const Scop &S)
-  : KernelNum(KernelNumCount) {
+  : AIOffset(0), KernelNum(KernelNumCount) {
   KernelNumCount++;
 
 // Analysis
   for (const ScopStmt &Stmt : S) {
     for (const MemoryAccess *MA : Stmt) {
-      addMemoryAccess(MA);
+      addReadAccess(MA);
+    }
+  }
+
+  for (const ScopStmt &Stmt : S) {
+    for (const MemoryAccess *MA : Stmt) {
+      addWriteAccess(MA);
     }
   }
 
@@ -271,22 +277,32 @@ bool SPDIR::writes(Value *V) const {
   return false;
 }
 
-void SPDIR::addMemoryAccess(const MemoryAccess *MA) {
+void SPDIR::addReadAccess(const MemoryAccess *MA) {
   Value *BaseAddr = MA->getOriginalBaseAddr();
   if (MA->isRead()) {
     if (writes(BaseAddr)) {
       llvm_unreachable("READ and WRITE is not allowed");
     }
     else if (!reads(BaseAddr)) {
-      ReadAccesses.push_back(new SPDArrayInfo(BaseAddr));
+      ReadAccesses.push_back(new SPDArrayInfo(BaseAddr, AIOffset));
+      AIOffset++;
     }
+  }
+}
+
+void SPDIR::addWriteAccess(const MemoryAccess *MA) {
+  Value *BaseAddr = MA->getOriginalBaseAddr();
+  if (MA->isRead()) {
+    // do nothing
+    return;
   }
   else if (MA->isWrite()) {
     if (reads(BaseAddr)) {
       llvm_unreachable("READ and WRITE is not allowed");
     }
     else if (!writes(BaseAddr)) {
-      WriteAccesses.push_back(new SPDArrayInfo(BaseAddr));
+      WriteAccesses.push_back(new SPDArrayInfo(BaseAddr, AIOffset));
+      AIOffset++;
     }
   }
   else {

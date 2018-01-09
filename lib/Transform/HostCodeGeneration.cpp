@@ -38,8 +38,8 @@ static Value *createAllocStreamFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB) {
   return IRB.CreateCall(Func, {IRB.getInt64(IR.getStreamAllocSize())});
 }
 
-static uint32_t createPackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
-                               Value *StreamBuffer) {
+static void createPackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
+                           Value *StreamBuffer) {
   Type *RetTy = Type::getVoidTy(M.getContext());
   Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
   Type *Int32Ty = Type::getInt32Ty(M.getContext());
@@ -50,15 +50,15 @@ static uint32_t createPackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
                             FloatPtrTy, Int32Ty, Int32Ty,
                             FloatPtrTy, Int64Ty);
 
-  uint32_t Offset = 0;
   for (auto Iter = IR.read_begin(); Iter != IR.read_end(); Iter++) {
+    SPDArrayInfo *AI = *Iter;
+
     SmallVector<Value *, 8> Args;
 
     Args.push_back(StreamBuffer);
-    Args.push_back(IRB.getInt32(Offset));
+    Args.push_back(IRB.getInt32(AI->getOffset()));
     Args.push_back(IRB.getInt32(IR.getStreamStride()));
 
-    SPDArrayInfo *AI = *Iter;
     Value *ArrayRef = AI->getArrayRef();
     ArrayRef = IRB.CreatePointerCast(ArrayRef, FloatPtrTy);
     Args.push_back(ArrayRef);
@@ -70,10 +70,7 @@ static uint32_t createPackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
     Args.push_back(IRB.getInt64(TotalSize));
 
     IRB.CreateCall(Func, Args);
-    Offset++;
   }
-
-  return Offset;
 }
 
 static void createRunKernelFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB) {
@@ -90,7 +87,7 @@ static void createRunKernelFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB) {
 }
 
 static void createUnpackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
-                             Value *StreamBuffer, uint32_t Offset) {
+                             Value *StreamBuffer) {
   Type *RetTy = Type::getVoidTy(M.getContext());
   Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
   Type *Int32Ty = Type::getInt32Ty(M.getContext());
@@ -102,9 +99,10 @@ static void createUnpackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
                             FloatPtrTy, Int32Ty, Int32Ty);
 
   for (auto Iter = IR.write_begin(); Iter != IR.write_end(); Iter++) {
+    SPDArrayInfo *AI = *Iter;
+
     SmallVector<Value *, 8> Args;
 
-    SPDArrayInfo *AI = *Iter;
     Value *ArrayRef = AI->getArrayRef();
     ArrayRef = IRB.CreatePointerCast(ArrayRef, FloatPtrTy);
     Args.push_back(ArrayRef);
@@ -116,11 +114,10 @@ static void createUnpackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
     Args.push_back(IRB.getInt64(TotalSize));
 
     Args.push_back(StreamBuffer);
-    Args.push_back(IRB.getInt32(Offset));
+    Args.push_back(IRB.getInt32(AI->getOffset()));
     Args.push_back(IRB.getInt32(IR.getStreamStride()));
 
     IRB.CreateCall(Func, Args);
-    Offset++;
   }
 }
 
@@ -171,9 +168,9 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
       IRBuilder<> Builder(Caller);
 
       Value *StreamBuffer = createAllocStreamFunc(IR, *M, Builder);
-      uint32_t Offset = createPackFunc(IR, *M, Builder, StreamBuffer);
+      createPackFunc(IR, *M, Builder, StreamBuffer);
       createRunKernelFunc(IR, *M, Builder);
-      createUnpackFunc(IR, *M, Builder, StreamBuffer, Offset);
+      createUnpackFunc(IR, *M, Builder, StreamBuffer);
       createFreeStreamFunc(IR, *M, Builder, StreamBuffer);
 
       Caller->eraseFromParent();
