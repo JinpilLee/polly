@@ -45,9 +45,9 @@ void SPDPrinter::emitOutParams() {
   }
 }
 
-void SPDPrinter::emitModuleDecl() {
+void SPDPrinter::emitModuleDecl(std::string &KernelName) {
 // FIXME needs name
-  *OS << "Name      " << "UNKNOWN" << ";\n";
+  *OS << "Name      " << KernelName << ";\n";
 
   emitInParams();
   emitOutParams();
@@ -221,13 +221,15 @@ void SPDPrinter::emitInstruction(SPDInstr *I) {
 SPDPrinter::SPDPrinter(SPDIR *I)
   : IR(I), EQUCount(0), ValueCount(0) {
   std::error_code EC;
-  OS = new raw_fd_ostream("temp.spd", EC, sys::fs::F_None);
+  std::string KernelName("kernel");
+  KernelName += std::to_string(IR->getKernelNum());
+  OS = new raw_fd_ostream(KernelName + ".spd", EC, sys::fs::F_None);
   if (EC) {
     std::cerr << "cannot create a output file";
   }
 
   *OS << "// module declaration\n";
-  emitModuleDecl();
+  emitModuleDecl(KernelName);
 
   *OS << "// equation\n";
   for (auto Iter = IR->instr_begin(); Iter != IR->instr_end(); Iter++) {

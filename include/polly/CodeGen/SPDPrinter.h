@@ -25,6 +25,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "polly/CodeGen/SPDIR.h"
 #include <map>
+#include <string>
 
 using namespace llvm;
 
@@ -45,7 +46,7 @@ private:
   SPDPrinter() = delete;
   void emitInParams();
   void emitOutParams();
-  void emitModuleDecl();
+  void emitModuleDecl(std::string &KernelName);
   void emitConstantInt(ConstantInt *CI);
   void emitConstantFP(ConstantFP *CFP);
   unsigned getValueNum(Value *V);

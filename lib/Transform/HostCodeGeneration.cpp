@@ -38,34 +38,17 @@ static Value *createAllocStreamFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB) {
   return IRB.CreateCall(Func, {IRB.getInt64(IR.getStreamAllocSize())});
 }
 
-static uint32_t createCopyInFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
-                                 Value *StreamBuffer) {
+static uint32_t createPackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
+                               Value *StreamBuffer) {
   Type *RetTy = Type::getVoidTy(M.getContext());
   Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
   Type *Int32Ty = Type::getInt32Ty(M.getContext());
   Type *Int64Ty = Type::getInt64Ty(M.getContext());
 
-  Value *Func = nullptr;
-  int StreamNumDims = IR.getStreamNumDims();
-  switch (StreamNumDims) {
-  default:
-    llvm_unreachable("Stream must be 1D/2D/3D");
-  case 1:
-    Func = M.getOrInsertFunction("__spd_copy_in_1D", RetTy,
-                                 FloatPtrTy, Int32Ty, Int32Ty,
-                                 FloatPtrTy, Int64Ty);
-    break;
-  case 2:
-    Func = M.getOrInsertFunction("__spd_copy_in_2D", RetTy,
-                                 FloatPtrTy, Int32Ty, Int32Ty,
-                                 FloatPtrTy, Int64Ty, Int64Ty);
-    break;
-  case 3:
-    Func = M.getOrInsertFunction("__spd_copy_in_3D", RetTy,
-                                 FloatPtrTy, Int32Ty, Int32Ty,
-                                 FloatPtrTy, Int64Ty, Int64Ty, Int64Ty);
-    break;
-  }
+  Value *Func
+    = M.getOrInsertFunction("__spd_pack_contiguous", RetTy,
+                            FloatPtrTy, Int32Ty, Int32Ty,
+                            FloatPtrTy, Int64Ty);
 
   uint32_t Offset = 0;
   for (auto Iter = IR.read_begin(); Iter != IR.read_end(); Iter++) {
@@ -79,9 +62,12 @@ static uint32_t createCopyInFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
     Value *ArrayRef = AI->getArrayRef();
     ArrayRef = IRB.CreatePointerCast(ArrayRef, FloatPtrTy);
     Args.push_back(ArrayRef);
+
+    uint64_t TotalSize = 1;
     for (uint64_t DimSize : *AI) {
-      Args.push_back(IRB.getInt64(DimSize));
+      TotalSize *= DimSize;
     }
+    Args.push_back(IRB.getInt64(TotalSize));
 
     IRB.CreateCall(Func, Args);
     Offset++;
@@ -96,57 +82,42 @@ static void createRunKernelFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB) {
   Value *Func = nullptr;
 
   Func = M.getOrInsertFunction("__spd_run_kernel",
-                               RetTy, ArgTy, ArgTy, ArgTy);
+                               RetTy, ArgTy);
 
-  IRB.CreateCall(Func,
-                 {ConstantInt::get(ArgTy, 0),
-                  ConstantInt::get(ArgTy, 1),
-                  ConstantInt::get(ArgTy, 2)});
+  SmallVector<Value *, 8> Args;
+  Args.push_back(IRB.getInt32(IR.getKernelNum()));
+  IRB.CreateCall(Func, Args);
 }
 
-static void createCopyOutFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
-                              Value *StreamBuffer, uint32_t Offset) {
+static void createUnpackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
+                             Value *StreamBuffer, uint32_t Offset) {
   Type *RetTy = Type::getVoidTy(M.getContext());
   Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
   Type *Int32Ty = Type::getInt32Ty(M.getContext());
   Type *Int64Ty = Type::getInt64Ty(M.getContext());
 
-  Value *Func = nullptr;
-  int StreamNumDims = IR.getStreamNumDims();
-  switch (StreamNumDims) {
-  default:
-    llvm_unreachable("Stream must be 1D/2D/3D");
-  case 1:
-    Func = M.getOrInsertFunction("__spd_copy_out_1D", RetTy,
-                                 FloatPtrTy, Int32Ty, Int32Ty,
-                                 FloatPtrTy, Int64Ty);
-    break;
-  case 2:
-    Func = M.getOrInsertFunction("__spd_copy_out_2D", RetTy,
-                                 FloatPtrTy, Int32Ty, Int32Ty,
-                                 FloatPtrTy, Int64Ty, Int64Ty);
-    break;
-  case 3:
-    Func = M.getOrInsertFunction("__spd_copy_out_3D", RetTy,
-                                 FloatPtrTy, Int32Ty, Int32Ty,
-                                 FloatPtrTy, Int64Ty, Int64Ty, Int64Ty);
-    break;
-  }
+  Value *Func
+    = M.getOrInsertFunction("__spd_unpack_contiguous", RetTy,
+                            FloatPtrTy, Int64Ty,
+                            FloatPtrTy, Int32Ty, Int32Ty);
 
   for (auto Iter = IR.write_begin(); Iter != IR.write_end(); Iter++) {
     SmallVector<Value *, 8> Args;
-
-    Args.push_back(StreamBuffer);
-    Args.push_back(IRB.getInt32(Offset));
-    Args.push_back(IRB.getInt32(IR.getStreamStride()));
 
     SPDArrayInfo *AI = *Iter;
     Value *ArrayRef = AI->getArrayRef();
     ArrayRef = IRB.CreatePointerCast(ArrayRef, FloatPtrTy);
     Args.push_back(ArrayRef);
+
+    uint64_t TotalSize = 1;
     for (uint64_t DimSize : *AI) {
-      Args.push_back(IRB.getInt64(DimSize));
+      TotalSize *= DimSize;
     }
+    Args.push_back(IRB.getInt64(TotalSize));
+
+    Args.push_back(StreamBuffer);
+    Args.push_back(IRB.getInt32(Offset));
+    Args.push_back(IRB.getInt32(IR.getStreamStride()));
 
     IRB.CreateCall(Func, Args);
     Offset++;
@@ -200,9 +171,9 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
       IRBuilder<> Builder(Caller);
 
       Value *StreamBuffer = createAllocStreamFunc(IR, *M, Builder);
-      uint32_t Offset = createCopyInFunc(IR, *M, Builder, StreamBuffer);
+      uint32_t Offset = createPackFunc(IR, *M, Builder, StreamBuffer);
       createRunKernelFunc(IR, *M, Builder);
-      createCopyOutFunc(IR, *M, Builder, StreamBuffer, Offset);
+      createUnpackFunc(IR, *M, Builder, StreamBuffer, Offset);
       createFreeStreamFunc(IR, *M, Builder, StreamBuffer);
 
       Caller->eraseFromParent();

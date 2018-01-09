@@ -77,7 +77,7 @@ public:
   uint32_t getStride() const { return Stride; }
   int getNumDims() const { return DimSizeList.size(); }
   uint64_t getAllocSize() const {
-    uint64_t Size = 0;
+    uint64_t Size = 1;
     for (auto Iter = begin(); Iter != end(); Iter++) {
       Size *= *Iter;
     }
@@ -114,6 +114,8 @@ public:
     delete SI;
   }
 
+  int getKernelNum() const { return KernelNum; }
+
   bool has(Instruction *I) const;
 
   typedef std::vector<SPDInstr *>::const_iterator instr_iterator;
@@ -138,6 +140,7 @@ public:
   void dump() const;
 
 private:
+  int KernelNum;
   std::vector<SPDInstr *> InstrList;
   std::vector<SPDArrayInfo *> ReadAccesses;
   std::vector<SPDArrayInfo *> WriteAccesses;

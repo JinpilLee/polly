@@ -28,6 +28,8 @@
 using namespace llvm;
 using namespace polly;
 
+static int KernelNumCount = 0;
+
 SPDInstr *SPDInstr::get(Instruction *I,
                         const ScopStmt *Stmt, SPDIR *IR) {
   if (I->mayReadOrWriteMemory()) {
@@ -137,7 +139,10 @@ SPDStreamInfo::SPDStreamInfo(uint32_t NumArrays, int NumDims, uint64_t *L)
   }
 }
 
-SPDIR::SPDIR(const Scop &S) {
+SPDIR::SPDIR(const Scop &S)
+  : KernelNum(KernelNumCount) {
+  KernelNumCount++;
+
 // Analysis
   for (const ScopStmt &Stmt : S) {
     for (const MemoryAccess *MA : Stmt) {
