@@ -16,7 +16,7 @@ void SPDPrinter::emitInParams() {
 
     Iter++;
     if (Iter == IR->read_end()) {
-      *OS << "};\n";
+      *OS << ", sop, eop};\n";
       break;
     }
     else {
@@ -36,7 +36,7 @@ void SPDPrinter::emitOutParams() {
 
     Iter++;
     if (Iter == IR->write_end()) {
-      *OS << "};\n";
+      *OS << ", sop, eop};\n";
       break;
     }
     else {
@@ -228,14 +228,14 @@ SPDPrinter::SPDPrinter(SPDIR *I)
     std::cerr << "cannot create a output file";
   }
 
-  *OS << "// module declaration\n";
   emitModuleDecl(KernelName);
 
-  *OS << "// equation\n";
   for (auto Iter = IR->instr_begin(); Iter != IR->instr_end(); Iter++) {
     SPDInstr *Instr = *Iter;
     emitInstruction(Instr);
   }
+
+  *OS << "DRCT (Mo::sop, Mo::eop) = (Mi::sop, Mi::eop);\n";
 }
 
 SPDPrinter::~SPDPrinter() {
