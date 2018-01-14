@@ -113,7 +113,8 @@ public:
       delete AI;
     }
 
-    delete SI;
+    delete ReadStream;
+    delete WriteStream;
   }
 
   int getKernelNum() const { return KernelNum; }
@@ -132,28 +133,25 @@ public:
   const_iterator write_end() const { return WriteAccesses.end(); };
   int getNumWrites() const { return WriteAccesses.size(); }
 
-  typedef std::vector<std::uint64_t>::const_iterator stream_iterator;
-  stream_iterator stream_begin() const { return SI->begin(); }
-  stream_iterator stream_end() const { return SI->end(); }
-  uint64_t getStreamAllocSize() const { return SI->getAllocSize(); }
-  int getStreamStride() const { return SI->getStride(); }
-  int getStreamNumDims() const { return SI->getNumDims(); }
+  SPDStreamInfo *getReadStream() const { return ReadStream; }
+  SPDStreamInfo *getWriteStream() const { return WriteStream; }
 
   void dump() const;
 
 private:
-  int AIOffset;
   int KernelNum;
   std::vector<SPDInstr *> InstrList;
   std::vector<SPDArrayInfo *> ReadAccesses;
   std::vector<SPDArrayInfo *> WriteAccesses;
-  SPDStreamInfo *SI;
+  SPDStreamInfo *ReadStream;
+  SPDStreamInfo *WriteStream;
 
   bool reads(Value *V) const;
   bool writes(Value *V) const;
-  void addReadAccess(const MemoryAccess *MA);
-  void addWriteAccess(const MemoryAccess *MA);
-  void createStreamInfo();
+  void addReadAccess(const MemoryAccess *MA, int &Offset);
+  void addWriteAccess(const MemoryAccess *MA, int &Offset);
+  void createReadStreamInfo();
+  void createWriteStreamInfo();
   void removeDeadInstrs();
 };
 } // end namespace polly

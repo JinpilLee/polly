@@ -140,80 +140,33 @@ SPDStreamInfo::SPDStreamInfo(uint32_t NumArrays, int NumDims, uint64_t *L)
 }
 
 SPDIR::SPDIR(const Scop &S)
-  : AIOffset(0), KernelNum(KernelNumCount) {
+  : KernelNum(KernelNumCount) {
   KernelNumCount++;
 
 // Analysis
+  int Offset = 0;
   for (const ScopStmt &Stmt : S) {
     for (const MemoryAccess *MA : Stmt) {
-      addReadAccess(MA);
+      addReadAccess(MA, Offset);
     }
   }
 
+  createReadStreamInfo();
+
+  Offset = 0;
   for (const ScopStmt &Stmt : S) {
     for (const MemoryAccess *MA : Stmt) {
-      addWriteAccess(MA);
+      addWriteAccess(MA, Offset);
     }
   }
 
-  createStreamInfo();
+  createWriteStreamInfo();
 
-/*
-  isl_space *Space = S.getParamSpace();
-  isl_union_map *Read = isl_union_map_empty(isl_space_copy(Space));
-  for (const ScopStmt &Stmt : S) {
-    for (const MemoryAccess *MA : Stmt) {
-      isl_set *StmtDomain = Stmt.getDomain();
-      isl_map *AccDomain = MA->getLatestAccessRelation();
-      AccDomain = isl_map_intersect_domain(AccDomain, StmtDomain);
-      printf("ACC_DOMAIN: %s\n", isl_map_to_str(AccDomain));
-      Read = isl_union_map_add_map(Read, AccDomain);
-      printf("READ: %s\n", isl_union_map_to_str(Read));
-    }
+// FIXME temporary limitation
+  if (ReadStream->getAllocSize() !=
+      WriteStream->getAllocSize()) {
+    llvm_unreachable("read/write stream should have the same size");
   }
-
-  Read = isl_union_map_coalesce(Read);
-  printf("READ: %s\n", isl_union_map_to_str(Read));
-
-  isl_space_free(Space);
-  isl_union_map_free(Read);
-*/
-/*
-  for (const ScopStmt &Stmt : S) {
-    assert(Stmt.isBlockStmt() && "ScopStmt is not a BlockStmt\n");
-    BasicBlock *BB = Stmt.getBasicBlock();
-
-    isl_set *DomainSet = isl_set_reset_tuple_id(Stmt.getDomain());
-    isl_set *StreamSet = isl_set_empty(isl_set_get_space(DomainSet));
-    for (BasicBlock::iterator IIB = BB->begin(), IIE = BB->end();
-         IIB != IIE; ++IIB) {
-      Instruction &I = *IIB;
-      if (I.mayReadOrWriteMemory()) {
-        MemoryAccess *MA = Stmt.getArrayAccessOrNULLFor(&I);
-        assert(MA != nullptr && "cannot find a MemoryAccess");
-
-        addMemoryAccess(MA);
-
-        isl_map *MAMap = MA->getLatestAccessRelation();
-        MAMap = isl_map_reset_tuple_id(MAMap, isl_dim_in);
-        MAMap = isl_map_reset_tuple_id(MAMap, isl_dim_out);
-
-        isl_set *TempSet = isl_set_empty(isl_set_get_space(DomainSet));
-        TempSet = isl_set_union(TempSet, isl_set_copy(DomainSet));
-        TempSet = isl_set_apply(TempSet, isl_map_copy(MAMap));
-        StreamSet = isl_set_union(StreamSet, isl_set_copy(TempSet));
-        StreamSet = isl_set_remove_redundancies(StreamSet);
-
-        isl_set_free(TempSet);
-        isl_map_free(MAMap);
-      }
-    }
-
-//    printf("ACC_RANGE: %s\n", isl_set_to_str(StreamSet));
-    isl_set_free(StreamSet);
-    isl_set_free(DomainSet);
-  }
-*/
 
 // IR Generation
   for (const ScopStmt &Stmt : S) {
@@ -277,20 +230,21 @@ bool SPDIR::writes(Value *V) const {
   return false;
 }
 
-void SPDIR::addReadAccess(const MemoryAccess *MA) {
+void SPDIR::addReadAccess(const MemoryAccess *MA, int &Offset) {
   Value *BaseAddr = MA->getOriginalBaseAddr();
   if (MA->isRead()) {
     if (writes(BaseAddr)) {
       llvm_unreachable("READ and WRITE is not allowed");
     }
     else if (!reads(BaseAddr)) {
-      ReadAccesses.push_back(new SPDArrayInfo(BaseAddr, AIOffset));
-      AIOffset++;
+      ReadAccesses.push_back(new SPDArrayInfo(BaseAddr, Offset));
+// FIXME bad impl
+      Offset++;
     }
   }
 }
 
-void SPDIR::addWriteAccess(const MemoryAccess *MA) {
+void SPDIR::addWriteAccess(const MemoryAccess *MA, int &Offset) {
   Value *BaseAddr = MA->getOriginalBaseAddr();
   if (MA->isRead()) {
     // do nothing
@@ -301,8 +255,9 @@ void SPDIR::addWriteAccess(const MemoryAccess *MA) {
       llvm_unreachable("READ and WRITE is not allowed");
     }
     else if (!writes(BaseAddr)) {
-      WriteAccesses.push_back(new SPDArrayInfo(BaseAddr, AIOffset));
-      AIOffset++;
+      WriteAccesses.push_back(new SPDArrayInfo(BaseAddr, Offset));
+// FIXME bad impl
+      Offset++;
     }
   }
   else {
@@ -310,7 +265,7 @@ void SPDIR::addWriteAccess(const MemoryAccess *MA) {
   }
 }
 
-void SPDIR::createStreamInfo() {
+void SPDIR::createReadStreamInfo() {
   int NumDims = 0;
   for (auto Iter = read_begin(); Iter != read_end(); Iter++) {
     SPDArrayInfo *AI = *Iter;
@@ -319,18 +274,6 @@ void SPDIR::createStreamInfo() {
     }
     else {
       if (NumDims != AI->getNumDims()) {
-        llvm_unreachable("Array dimension mush be the same");
-      }
-    }
-  }
-
-  for (auto Iter = write_begin(); Iter != write_end(); Iter++) {
-    SPDArrayInfo *AI = *Iter;
-    if (NumDims == 0) {
-      NumDims = AI->getNumDims();
-    }
-    else {
-      if (NumDims!= AI->getNumDims()) {
         llvm_unreachable("Array dimension mush be the same");
       }
     }
@@ -355,6 +298,30 @@ void SPDIR::createStreamInfo() {
     }
   }
 
+  ReadStream = new SPDStreamInfo(NumArrays, NumDims, DimSizeArray);
+  delete[] DimSizeArray;
+}
+
+void SPDIR::createWriteStreamInfo() {
+  int NumDims = 0;
+  for (auto Iter = write_begin(); Iter != write_end(); Iter++) {
+    SPDArrayInfo *AI = *Iter;
+    if (NumDims == 0) {
+      NumDims = AI->getNumDims();
+    }
+    else {
+      if (NumDims!= AI->getNumDims()) {
+        llvm_unreachable("Array dimension mush be the same");
+      }
+    }
+  }
+
+  uint64_t *DimSizeArray = new uint64_t[NumDims];
+  for (int i = 0; i < NumDims; i++) {
+    DimSizeArray[i] = 0;
+  }
+
+  uint32_t NumArrays = 0;
   for (auto Iter = write_begin(); Iter != write_end(); Iter++) {
     SPDArrayInfo *AI = *Iter;
     NumArrays++;
@@ -368,8 +335,7 @@ void SPDIR::createStreamInfo() {
     }
   }
 
-  SI = new SPDStreamInfo(NumArrays, NumDims, DimSizeArray);
-
+  WriteStream = new SPDStreamInfo(NumArrays, NumDims, DimSizeArray);
   delete[] DimSizeArray;
 }
 

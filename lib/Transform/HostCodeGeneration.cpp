@@ -27,19 +27,15 @@ using namespace polly;
 
 #define DEBUG_TYPE "polly-host-codegen"
 
-static void generateSPDFromIR(SPDIR &IR) {
-  ;
-}
-
-static Value *createAllocStreamFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB) {
+static Value *createAllocStreamFunc(SPDStreamInfo *SI, Module &M, IRBuilder<> &IRB) {
   Type *RetTy = Type::getFloatPtrTy(M.getContext());
   Type *Int64Ty = Type::getInt64Ty(M.getContext());
   Value *Func = M.getOrInsertFunction("__spd_alloc_stream", RetTy, Int64Ty);
-  return IRB.CreateCall(Func, {IRB.getInt64(IR.getStreamAllocSize())});
+  return IRB.CreateCall(Func, {IRB.getInt64(SI->getAllocSize())});
 }
 
 static void createPackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
-                           Value *StreamBuffer) {
+                           SPDStreamInfo *SI, Value *StreamBuffer) {
   Type *RetTy = Type::getVoidTy(M.getContext());
   Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
   Type *Int32Ty = Type::getInt32Ty(M.getContext());
@@ -57,7 +53,7 @@ static void createPackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
 
     Args.push_back(StreamBuffer);
     Args.push_back(IRB.getInt32(AI->getOffset()));
-    Args.push_back(IRB.getInt32(IR.getStreamStride()));
+    Args.push_back(IRB.getInt32(SI->getStride()));
 
     Value *ArrayRef = AI->getArrayRef();
     ArrayRef = IRB.CreatePointerCast(ArrayRef, FloatPtrTy);
@@ -73,21 +69,28 @@ static void createPackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
   }
 }
 
-static void createRunKernelFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB) {
+static void createRunKernelFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
+                                SPDStreamInfo *RSI, Value *RSB,
+                                SPDStreamInfo *WSI, Value *WSB) {
   Type *RetTy = Type::getVoidTy(M.getContext());
-  Type *ArgTy = Type::getInt32Ty(M.getContext());
-  Value *Func = nullptr;
-
-  Func = M.getOrInsertFunction("__spd_run_kernel",
-                               RetTy, ArgTy);
+  Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
+  Type *Int64Ty = Type::getInt64Ty(M.getContext());
+  
+  Value *Func
+    = M.getOrInsertFunction("__spd_run_kernel", RetTy,
+                            FloatPtrTy, Int64Ty,
+                            FloatPtrTy, Int64Ty);
 
   SmallVector<Value *, 8> Args;
-  Args.push_back(IRB.getInt32(IR.getKernelNum()));
+  Args.push_back(RSB);
+  Args.push_back(IRB.getInt64(RSI->getAllocSize()));
+  Args.push_back(WSB);
+  Args.push_back(IRB.getInt64(WSI->getAllocSize()));
   IRB.CreateCall(Func, Args);
 }
 
 static void createUnpackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
-                             Value *StreamBuffer) {
+                             SPDStreamInfo *SI, Value *StreamBuffer) {
   Type *RetTy = Type::getVoidTy(M.getContext());
   Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
   Type *Int32Ty = Type::getInt32Ty(M.getContext());
@@ -115,7 +118,7 @@ static void createUnpackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
 
     Args.push_back(StreamBuffer);
     Args.push_back(IRB.getInt32(AI->getOffset()));
-    Args.push_back(IRB.getInt32(IR.getStreamStride()));
+    Args.push_back(IRB.getInt32(SI->getStride()));
 
     IRB.CreateCall(Func, Args);
   }
@@ -167,11 +170,20 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
       Module *M = F.getParent();
       IRBuilder<> Builder(Caller);
 
-      Value *StreamBuffer = createAllocStreamFunc(IR, *M, Builder);
-      createPackFunc(IR, *M, Builder, StreamBuffer);
-      createRunKernelFunc(IR, *M, Builder);
-      createUnpackFunc(IR, *M, Builder, StreamBuffer);
-      createFreeStreamFunc(IR, *M, Builder, StreamBuffer);
+      SPDStreamInfo *RSI = IR.getReadStream();
+      SPDStreamInfo *WSI = IR.getWriteStream();
+
+      Value *ReadStreamBuffer
+        = createAllocStreamFunc(RSI, *M, Builder);
+      Value *WriteStreamBuffer
+        = createAllocStreamFunc(WSI, *M, Builder);
+      createPackFunc(IR, *M, Builder, RSI, ReadStreamBuffer);
+      createRunKernelFunc(IR, *M, Builder,
+                          RSI, ReadStreamBuffer,
+                          WSI, WriteStreamBuffer);
+      createUnpackFunc(IR, *M, Builder, WSI, WriteStreamBuffer);
+      createFreeStreamFunc(IR, *M, Builder, ReadStreamBuffer);
+      createFreeStreamFunc(IR, *M, Builder, WriteStreamBuffer);
 
       Caller->eraseFromParent();
 
