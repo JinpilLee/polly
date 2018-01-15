@@ -1,6 +1,5 @@
 This repository hosts the sources of Polly for FPGA based on Polly 5.0.0.  
 How to build Polly for SPGen  
-
 1. download LLVM from:  
 http://releases.llvm.org/5.0.0/llvm-5.0.0.src.tar.xz  
 2. make a workspace, for example:  
@@ -16,4 +15,6 @@ cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX={LLVM_INSTALL_PATH_YOU_WANT} ..
 7. make and make install  
 8. set PATH, LD_LIBRARY_PATH for LLVM, for example:  
   export PATH=$(LLVM_PATH)/bin:$PATH  
-  export LD_LIBRARY_PATH=$(LLVM_PATH)/lib:$LD_LIBRARY_PATH
+  export LD_LIBRARY_PATH=$(LLVM_PATH)/lib:$LD_LIBRARY_PATH  
+How to generate SPDFile (compile option)  
+clang -O3 -fno-inline -c -mllvm -polly -mllvm -polly-enable-spdgen test.c
