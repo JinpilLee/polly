@@ -13,6 +13,7 @@
 
 #include "polly/LinkAllPasses.h"
 #include "polly/LoopExtraction.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/Transforms/Scalar.h"
@@ -27,9 +28,49 @@ bool LoopExtraction::runOnLoop(Loop *L, LPPassManager &) {
   if (skipLoop(L))
     return false;
 
-  // Only visit top-level loops.
-  if (L->getParentLoop())
+  // FIXME temporary impl
+  // implement directive
+  BasicBlock *Header = L->getHeader();
+  Instruction *FirstNonPHI = Header->getFirstNonPHI();
+  uint64_t RegionNumber = 0;
+  uint64_t VectorLength = 1;
+  uint64_t SwitchInOut = 0;
+  CallInst *CI = dyn_cast<CallInst>(FirstNonPHI);
+  if (CI == nullptr) {
     return false;
+  }
+  else {
+    if (CI->getCalledFunction()->getName().equals("__spd_loop")) {
+      ConstantInt *Op = dyn_cast<ConstantInt>(CI->getOperand(0));
+      if (Op == nullptr) {
+        llvm_unreachable("region number is not a constant integer");
+      }
+
+      RegionNumber = Op->getZExtValue();
+
+      Op = dyn_cast<ConstantInt>(CI->getOperand(1));
+      if (Op == nullptr) {
+        llvm_unreachable("vector length is not a constant integer");
+      }
+
+      VectorLength = Op->getZExtValue();
+
+      Op = dyn_cast<ConstantInt>(CI->getOperand(2));
+      if (Op == nullptr) {
+        llvm_unreachable("switch in/out is not a constant integer");
+      }
+      else if (!(Op->isOne() || Op->isZero())) {
+        llvm_unreachable("switch in/out should be a boolean value");
+      }
+
+      SwitchInOut = Op->getZExtValue();
+
+      CI->eraseFromParent();
+    }
+    else {
+      return false;
+    }
+  }
 
   // If LoopSimplify form is not available, stay out of trouble.
   if (!L->isLoopSimplifyForm())
@@ -88,8 +129,12 @@ bool LoopExtraction::runOnLoop(Loop *L, LPPassManager &) {
       // After extraction, the loop is replaced by a function call, so
       // we shouldn't try to run any more loop passes on it.
       LI.markAsRemoved(L);
+      Type *Int64Ty = Type::getInt64Ty(ExtractedFunc->getContext());
       Metadata *MDArgs[] = {
-        ValueAsMetadata::get(&*(L->getHeader()->begin()))
+        ValueAsMetadata::get(&*(L->getHeader()->begin())),
+        ConstantAsMetadata::get(ConstantInt::get(Int64Ty, RegionNumber)),
+        ConstantAsMetadata::get(ConstantInt::get(Int64Ty, VectorLength)),
+        ConstantAsMetadata::get(ConstantInt::get(Int64Ty, SwitchInOut))
       };
       ExtractedFunc->setMetadata("polly_extracted_loop",
                                  MDNode::get(ExtractedFunc->getContext(),

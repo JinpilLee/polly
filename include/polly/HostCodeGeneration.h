@@ -19,8 +19,10 @@
 
 #include "llvm/IR/Function.h"
 #include "llvm/IR/PassManager.h"
+#include <map>
 
 namespace llvm {
+class Instruction;
 class Function;
 } // namespace llvm
 
@@ -35,10 +37,15 @@ struct HostCodeGeneration : public FunctionPass {
 
   HostCodeGeneration() : FunctionPass(ID) {}
 
+  bool doInitialization(Module &M) override;
   bool runOnFunction(Function &F) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
 
 private:
+  std::map<uint64_t, Instruction *> RegionBeginMap;
+  std::map<uint64_t, Instruction *> RegionEndMap;
+
+  uint64_t getRegionNumber(Instruction *Instr) const;
   const Scop *getScopFromInstr(Instruction *Instr, ScopInfo *SI) const;
 };
 } // end namespace polly

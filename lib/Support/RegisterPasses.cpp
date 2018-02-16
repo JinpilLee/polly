@@ -239,6 +239,7 @@ void initializePollyPasses(PassRegistry &Registry) {
   initializeLoopExtractionPass(Registry);
   initializeSPDCodeGenPass(Registry);
   initializeHostCodeGenerationPass(Registry);
+  initializeSPDCleanUpPass(Registry);
   initializeCodePreparationPass(Registry);
   initializeDeadCodeElimPass(Registry);
   initializeDependenceInfoPass(Registry);
@@ -380,6 +381,8 @@ void registerPollyPasses(llvm::legacy::PassManagerBase &PM) {
     PM.add(createSPDCodeGenPass());
     // 3. replace function call with external runtime (Function Pass?)
     PM.add(createHostCodeGenerationPass());
+    PM.add(createBarrierNoopPass());
+    PM.add(createSPDCleanUpPass());
   }
 
   // FIXME: This dummy ModulePass keeps some programs from miscompiling,

@@ -57,6 +57,7 @@ add_library(PollyCore OBJECT
   ${POLLY_JSON_FILES}
   Transform/LoopExtraction.cpp
   Transform/HostCodeGeneration.cpp
+  Transform/SPDCleanUp.cpp
   Transform/Canonicalization.cpp
   Transform/CodePreparation.cpp
   Transform/DeadCodeElimination.cpp
