@@ -36,7 +36,7 @@ typedef std::map<Value *, MemoryAccess *> MemInstrMapTy;
 
 class SPDPrinter {
 public:
-  SPDPrinter(SPDIR *I);
+  SPDPrinter(SPDIR *I, uint64_t VL);
   ~SPDPrinter();
 
 // FIXME
@@ -44,19 +44,20 @@ public:
 
 private:
   SPDPrinter() = delete;
-  void emitInParams();
-  void emitOutParams();
-  void emitModuleDecl(std::string &KernelName);
+  void emitInParams(uint64_t VL);
+  void emitOutParams(uint64_t VL);
+  void emitModuleDecl(std::string &KernelName, uint64_t VL);
   void emitConstantInt(ConstantInt *CI);
   void emitConstantFP(ConstantFP *CFP);
   unsigned getValueNum(Value *V);
-  void emitValue(Value *V);
+  void emitValue(Value *V, uint64_t VL);
   void emitOpcode(unsigned Opcode);
   void emitEQUPrefix();
-  void emitInstruction(SPDInstr *Instr);
+  void emitInstruction(SPDInstr *Instr, uint64_t VL);
 
   raw_fd_ostream *OS;
   SPDIR *IR;
+  uint64_t VectorLength;
 
   unsigned EQUCount;
   unsigned HDLCount;

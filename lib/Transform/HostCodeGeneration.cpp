@@ -199,23 +199,20 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
 
   if (MDNode *Node = F.getMetadata("polly_extracted_loop")) {
     ValueAsMetadata *VM = dyn_cast<ValueAsMetadata>(Node->getOperand(0));
-    const Scop *S
-      = getScopFromInstr(dyn_cast<Instruction>(VM->getValue()), SI);
-
-    SPDIR IR(*S);
-    SPDPrinter Print(&IR);
-
     ConstantAsMetadata *CM = dyn_cast<ConstantAsMetadata>(Node->getOperand(1));
     uint64_t RegionNumber
       = dyn_cast<ConstantInt>(CM->getValue())->getZExtValue();
-
     CM = dyn_cast<ConstantAsMetadata>(Node->getOperand(2));
     uint64_t VectorLength
       = dyn_cast<ConstantInt>(CM->getValue())->getZExtValue();
-
     CM = dyn_cast<ConstantAsMetadata>(Node->getOperand(3));
     uint64_t SwitchInOut
       = dyn_cast<ConstantInt>(CM->getValue())->getZExtValue();
+
+    const Scop *S
+      = getScopFromInstr(dyn_cast<Instruction>(VM->getValue()), SI);
+    SPDIR IR(*S);
+    SPDPrinter Print(&IR, VectorLength);
 
     // FIXME consider better impl than using counter
     unsigned InstCount = 0;

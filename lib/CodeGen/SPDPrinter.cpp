@@ -5,52 +5,50 @@
 using namespace llvm;
 using namespace polly;
 
-void SPDPrinter::emitInParams() {
+void SPDPrinter::emitInParams(uint64_t VL) {
   if (IR->getNumReads() == 0) return;
 
   *OS << "Main_In   {Mi::";
   auto Iter = IR->read_begin();
   while (true) {
     SPDArrayInfo *AI = *Iter;
-    *OS << AI->getArrayRef()->getName().str();
+    for (uint64_t i = 0; i < VL; i++) {
+      *OS << AI->getArrayRef()->getName().str() << i << ", ";
+    }
 
     Iter++;
     if (Iter == IR->read_end()) {
-      *OS << ", sop, eop};\n";
+      *OS << "sop, eop};\n";
       break;
-    }
-    else {
-      *OS << ", ";
     }
   }
 }
 
-void SPDPrinter::emitOutParams() {
+void SPDPrinter::emitOutParams(uint64_t VL) {
   if (IR->getNumWrites() == 0) return;
 
   *OS << "Main_Out  {Mo::";
   auto Iter = IR->write_begin();
   while (true) {
     SPDArrayInfo *AI = *Iter;
-    *OS << AI->getArrayRef()->getName().str();
+    for (uint64_t i = 0; i < VL; i++) {
+      *OS << AI->getArrayRef()->getName().str() << i << ", ";
+    }
 
     Iter++;
     if (Iter == IR->write_end()) {
-      *OS << ", sop, eop};\n";
+      *OS << "sop, eop};\n";
       break;
-    }
-    else {
-      *OS << ", ";
     }
   }
 }
 
-void SPDPrinter::emitModuleDecl(std::string &KernelName) {
+void SPDPrinter::emitModuleDecl(std::string &KernelName, uint64_t VL) {
 // FIXME needs name
   *OS << "Name      " << KernelName << ";\n";
 
-  emitInParams();
-  emitOutParams();
+  emitInParams(VL);
+  emitOutParams(VL);
 }
 
 // copied from WriteConstantInternal()@IR/AsmPrinter.cpp
@@ -141,12 +139,12 @@ unsigned SPDPrinter::getValueNum(Value *V) {
   }
 }
 
-void SPDPrinter::emitValue(Value *V) {
+void SPDPrinter::emitValue(Value *V, uint64_t VL) {
   MemInstrMapTy::iterator Iter = MemInstrMap.find(V);
   if (Iter != MemInstrMap.end()) {
     // FIXME we need to consider array subscript
     MemoryAccess *MA = Iter->second;
-    *OS << MA->getOriginalBaseAddr()->getName().str();
+    *OS << MA->getOriginalBaseAddr()->getName().str() << VL;
   }
   else if (isa<ConstantInt>(V)) {
     emitConstantInt(dyn_cast<ConstantInt>(V));
@@ -156,10 +154,10 @@ void SPDPrinter::emitValue(Value *V) {
   }
   else {
     if (V->hasName()) {
-      *OS << V->getName().str();
+      *OS << V->getName().str() << VL;
     }
     else {
-      *OS << getValueNum(V);
+      *OS << getValueNum(V) << VL;
     }
   }
 }
@@ -191,7 +189,7 @@ void SPDPrinter::emitEQUPrefix() {
     EQUCount++;
 }
 
-void SPDPrinter::emitInstruction(SPDInstr *I) {
+void SPDPrinter::emitInstruction(SPDInstr *I, uint64_t VL) {
   Instruction *Instr = I->getLLVMInstr();
   if (Instr->mayReadFromMemory()) {
     MemInstrMap[dyn_cast<Value>(Instr)] = I->getMemoryAccess();
@@ -199,18 +197,18 @@ void SPDPrinter::emitInstruction(SPDInstr *I) {
   else if (Instr->mayWriteToMemory()) {
     emitEQUPrefix();
     MemoryAccess *MA = I->getMemoryAccess();
-    *OS << MA->getOriginalBaseAddr()->getName().str();
+    *OS << MA->getOriginalBaseAddr()->getName().str() << VL;
     *OS << " = ";
-    emitValue(Instr->getOperand(0));
+    emitValue(Instr->getOperand(0), VL);
     *OS << ";\n";
   }
   else if (Instr->isBinaryOp()) {
     emitEQUPrefix();
-    emitValue(dyn_cast<Value>(Instr));
+    emitValue(dyn_cast<Value>(Instr), VL);
     *OS << " = ";
-    emitValue(Instr->getOperand(0));
+    emitValue(Instr->getOperand(0), VL);
     emitOpcode(Instr->getOpcode());
-    emitValue(Instr->getOperand(1));
+    emitValue(Instr->getOperand(1), VL);
     *OS << ";\n";
   }
   else {
@@ -218,8 +216,8 @@ void SPDPrinter::emitInstruction(SPDInstr *I) {
   }
 }
 
-SPDPrinter::SPDPrinter(SPDIR *I)
-  : IR(I), EQUCount(0), ValueCount(0) {
+SPDPrinter::SPDPrinter(SPDIR *I, uint64_t VL)
+  : IR(I), VectorLength(VL), EQUCount(0), ValueCount(0) {
   std::error_code EC;
   std::string KernelName("kernel");
   KernelName += std::to_string(IR->getKernelNum());
@@ -228,11 +226,13 @@ SPDPrinter::SPDPrinter(SPDIR *I)
     std::cerr << "cannot create a output file";
   }
 
-  emitModuleDecl(KernelName);
+  emitModuleDecl(KernelName, VL);
 
   for (auto Iter = IR->instr_begin(); Iter != IR->instr_end(); Iter++) {
     SPDInstr *Instr = *Iter;
-    emitInstruction(Instr);
+    for (uint64_t i = 0; i < VectorLength; i++) {
+      emitInstruction(Instr, i);
+    }
   }
 
   *OS << "DRCT (Mo::sop, Mo::eop) = (Mi::sop, Mi::eop);\n";
