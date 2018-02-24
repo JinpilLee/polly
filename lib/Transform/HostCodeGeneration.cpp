@@ -16,6 +16,8 @@
 #include "polly/HostCodeGeneration.h"
 #include "polly/LinkAllPasses.h"
 #include "polly/ScopInfo.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IRBuilder.h"
 
@@ -211,7 +213,9 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
 
     const Scop *S
       = getScopFromInstr(dyn_cast<Instruction>(VM->getValue()), SI);
-    SPDIR IR(*S);
+    auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+    auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+    SPDIR IR(*S, LI, SE);
     SPDPrinter Print(&IR, VectorLength);
 
     // FIXME consider better impl than using counter
@@ -264,7 +268,12 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
 
 void HostCodeGeneration::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<ScopInfoWrapperPass>();
+  AU.addRequired<LoopInfoWrapperPass>();
+  AU.addRequired<ScalarEvolutionWrapperPass>();
+
   AU.addPreserved<ScopInfoWrapperPass>();
+  AU.addPreserved<LoopInfoWrapperPass>();
+  AU.addPreserved<ScalarEvolutionWrapperPass>();
 }
 
 char HostCodeGeneration::ID = 0;
@@ -276,5 +285,7 @@ Pass *polly::createHostCodeGenerationPass() {
 INITIALIZE_PASS_BEGIN(HostCodeGeneration, "polly-host-codegen",
                       "Polly - Host Code Generation", false, false);
 INITIALIZE_PASS_DEPENDENCY(ScopInfoWrapperPass);
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass);
+INITIALIZE_PASS_DEPENDENCY(ScalarEvolutionWrapperPass);
 INITIALIZE_PASS_END(HostCodeGeneration, "polly-host-codegen",
                     "Polly - Host Code Generation", false, false)

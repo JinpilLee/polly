@@ -13,6 +13,8 @@
 
 #include "isl/map.h"
 #include "isl/set.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Value.h"
 #include "polly/ScopInfo.h"
@@ -32,25 +34,43 @@ static int KernelNumCount = 0;
 
 SPDInstr *SPDInstr::get(Instruction *I,
                         const ScopStmt *Stmt, SPDIR *IR) {
+  int64_t StreamOffset = 0;
   if (I->mayReadOrWriteMemory()) {
     MemoryAccess *MA = Stmt->getArrayAccessOrNULLFor(I);
-    unsigned Num = MA->getNumSubscripts();
-    for (unsigned i = 0; i < Num; i++) {
-      const SCEVAddRecExpr *SExpr
-        = dyn_cast<SCEVAddRecExpr>(MA->getSubscript(i));
-      assert(SExpr->isAffine() &&
-             "array subscripts should be expressed by an affine function");
+    const SPDArrayInfo *AI = IR->getArrayInfo(MA->getOriginalBaseAddr());
 
-// FIXME current impl only allows {0,+,1}<loop>
-/*
-      const SCEV *StartExpr = SExpr->getStart();
-      assert(StartExpr->isZero() && "FIXME: currently StartExpr should be 0");
-      const SCEV *StepExpr = SExpr->getStepRecurrence(*(Stmt->getParent()->getSE()));
-      assert(StepExpr->isOne() && "FIXME: currently StepExpr should be 1");
-*/
+    std::vector<int64_t> DimAccList;
+    int64_t DimAcc = 1;
+    for (uint64_t DimSize : *AI) {
+      DimAccList.insert(DimAccList.begin(), DimAcc);
+      DimAcc *= DimSize;
     }
 
-    return new SPDInstr(I, Stmt, IR);
+    unsigned Num = MA->getNumSubscripts();
+    for (unsigned i = 0; i < Num; i++) {
+// FIXME assumption: subscript expr is add
+      const SCEVAddRecExpr *SExpr
+        = dyn_cast<SCEVAddRecExpr>(MA->getSubscript(i));
+      assert(((SExpr != nullptr) && (SExpr->isAffine())) &&
+             "array subscripts should be expressed by an affine function");
+
+// FIXME current impl only allows {start_const,+,1}<loop>
+      const SCEV *StepExpr = SExpr->getStepRecurrence(*(Stmt->getParent()->getSE()));
+      assert(StepExpr->isOne() && "FIXME: currently StepExpr should be 1");
+
+      const SCEVConstant *StartExpr = dyn_cast<SCEVConstant>(SExpr->getStart());
+      assert((StartExpr != nullptr) && "array subscripts should be constants");
+
+      int64_t DimStartValue = StartExpr->getValue()->getSExtValue();
+      std::cerr << "DimStartValue: " << DimStartValue << "\n";
+      std::cerr << "DimAcc: " << DimAccList[i] << "\n";
+
+// FIXME this should consider index domain (start index)
+      StreamOffset += (DimStartValue * DimAccList[i]);
+    }
+
+    std::cerr << "StreamOffset: " << StreamOffset << "\n";
+    return new SPDInstr(I, Stmt, IR, StreamOffset);
   }
 
   switch (I->getOpcode()) {
@@ -65,7 +85,7 @@ SPDInstr *SPDInstr::get(Instruction *I,
   case Instruction::UDiv:
   case Instruction::SDiv:
   case Instruction::FDiv:
-    return new SPDInstr(I, Stmt, IR);
+    return new SPDInstr(I, Stmt, IR, 0);
   }
 
   return nullptr;
@@ -139,9 +159,13 @@ SPDStreamInfo::SPDStreamInfo(uint32_t NumArrays, int NumDims, uint64_t *L)
   }
 }
 
-SPDIR::SPDIR(const Scop &S)
+SPDIR::SPDIR(const Scop &S, LoopInfo &LI, ScalarEvolution &SE)
   : KernelNum(KernelNumCount) {
   KernelNumCount++;
+
+// FIXME temporary limitation
+  assert((S.getSize() == 1) &&
+         "current implementation allows single ScopStmt");
 
 // Analysis
   int Offset = 0;
@@ -237,7 +261,9 @@ void SPDIR::addReadAccess(const MemoryAccess *MA, int &Offset) {
       llvm_unreachable("READ and WRITE is not allowed");
     }
     else if (!reads(BaseAddr)) {
-      ReadAccesses.push_back(new SPDArrayInfo(BaseAddr, Offset));
+      SPDArrayInfo *AI = new SPDArrayInfo(BaseAddr, Offset);
+      ReadAccesses.push_back(AI);
+      ArrayInfoTable[BaseAddr] = AI;
 // FIXME bad impl
       Offset++;
     }
@@ -255,7 +281,9 @@ void SPDIR::addWriteAccess(const MemoryAccess *MA, int &Offset) {
       llvm_unreachable("READ and WRITE is not allowed");
     }
     else if (!writes(BaseAddr)) {
-      WriteAccesses.push_back(new SPDArrayInfo(BaseAddr, Offset));
+      SPDArrayInfo *AI = new SPDArrayInfo(BaseAddr, Offset);
+      WriteAccesses.push_back(AI);
+      ArrayInfoTable[BaseAddr] = AI;
 // FIXME bad impl
       Offset++;
     }

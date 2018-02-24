@@ -16,10 +16,13 @@
 
 #include <cstdint>
 #include <vector>
+#include <map>
 
 namespace llvm {
 class Instruction;
 class Value;
+class LoopInfo;
+class ScalarEvolution;
 } // namespace llvm
 
 using namespace llvm;
@@ -30,6 +33,8 @@ class Scop;
 class ScopStmt;
 class SPDIR;
 
+// FIXME SPDInstr needs refactoring
+// Implement SPDInstrMemRead/Write and move StreamOffset to them
 class SPDInstr {
 public:
   static SPDInstr *get(Instruction *I,
@@ -40,15 +45,19 @@ public:
   void dump() const;
   Instruction *getLLVMInstr() const { return LLVMInstr; }
   MemoryAccess *getMemoryAccess() const;
+  int64_t getStreamOffset() const { return StreamOffset; }
 
 private:
+  int64_t StreamOffset;
   Instruction *LLVMInstr;
   const ScopStmt *ParentStmt;
   const SPDIR *ParentIR;
 
   SPDInstr() = delete;
-  SPDInstr(Instruction *I, const ScopStmt *Stmt, SPDIR *IR)
-    : LLVMInstr(I), ParentStmt(Stmt), ParentIR(IR) {}
+  SPDInstr(Instruction *I, const ScopStmt *Stmt, SPDIR *IR,
+           int64_t SO)
+    : StreamOffset(SO), LLVMInstr(I),
+      ParentStmt(Stmt), ParentIR(IR) {}
 };
 
 class SPDArrayInfo {
@@ -70,6 +79,48 @@ private:
   int Offset;
   Value *LLVMValue;
   std::vector<std::uint64_t> DimSizeList;
+};
+
+class SPDDomainExpr {
+public:
+  SPDDomainExpr(uint64_t SI, uint64_t EI, uint64_t S)
+    : StartIndex(SI), EndIndex(EI), Stride(S) {}
+
+  uint64_t getStart() const { return StartIndex; }
+  uint64_t getEnd() const { return EndIndex; }
+  uint64_t getStride() const { return Stride; }
+
+private:
+  uint64_t StartIndex;
+  uint64_t EndIndex;
+  uint64_t Stride;
+};
+
+class SPDDomainInfo {
+public:
+  SPDDomainInfo(unsigned NumDims,
+                uint64_t *StartList,
+                uint64_t *EndList,
+                uint64_t *StrideList) {
+    for (unsigned i = 0; i < NumDims; i++) {
+      DomainExprList.push_back(new SPDDomainExpr(StartList[i],
+                                                 EndList[i],
+                                                 StrideList[i]));
+    }
+  }
+
+  ~SPDDomainInfo() {
+    for (SPDDomainExpr *DE : *this) {
+      delete DE;
+    }
+  }
+
+  typedef std::vector<SPDDomainExpr *>::const_iterator const_iterator;
+  const_iterator begin() const { return DomainExprList.begin(); }
+  const_iterator end() const { return DomainExprList.end(); }
+
+private:
+  std::vector<SPDDomainExpr *> DomainExprList;
 };
 
 class SPDStreamInfo {
@@ -98,9 +149,11 @@ private:
 
 class SPDIR {
 public:
-  SPDIR(const Scop &S);
+  SPDIR(const Scop &S, LoopInfo &LI, ScalarEvolution &SE);
 
   ~SPDIR() {
+    delete DI;
+
     for (SPDInstr *I : InstrList) {
       delete I;
     }
@@ -136,15 +189,19 @@ public:
   SPDStreamInfo *getReadStream() const { return ReadStream; }
   SPDStreamInfo *getWriteStream() const { return WriteStream; }
 
+  const SPDArrayInfo *getArrayInfo(Value *V) { return ArrayInfoTable[V]; }
+
   void dump() const;
 
 private:
   int KernelNum;
+  SPDDomainInfo *DI;
   std::vector<SPDInstr *> InstrList;
   std::vector<SPDArrayInfo *> ReadAccesses;
   std::vector<SPDArrayInfo *> WriteAccesses;
   SPDStreamInfo *ReadStream;
   SPDStreamInfo *WriteStream;
+  std::map<Value *, SPDArrayInfo *> ArrayInfoTable;
 
   bool reads(Value *V) const;
   bool writes(Value *V) const;
