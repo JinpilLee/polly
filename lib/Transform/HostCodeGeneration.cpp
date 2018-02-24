@@ -216,7 +216,8 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
     auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
     auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
     SPDIR IR(*S, LI, SE);
-    SPDPrinter Print(&IR, VectorLength);
+// FIXME for unroll test
+    SPDPrinter Print(&IR, VectorLength, 3);
 
     // FIXME consider better impl than using counter
     unsigned InstCount = 0;

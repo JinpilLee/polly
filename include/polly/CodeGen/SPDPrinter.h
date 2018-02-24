@@ -31,12 +31,12 @@ using namespace llvm;
 
 namespace polly {
 
-typedef std::map<Value *, unsigned>       CalcInstrMapTy;
-typedef std::map<Value *, MemoryAccess *> MemInstrMapTy;
+typedef std::map<Value *, unsigned>   CalcInstrMapTy;
+typedef std::map<Value *, SPDInstr *> MemInstrMapTy;
 
 class SPDPrinter {
 public:
-  SPDPrinter(SPDIR *I, uint64_t VL);
+  SPDPrinter(SPDIR *I, uint64_t VL, uint64_t UC);
   ~SPDPrinter();
 
 // FIXME
@@ -57,7 +57,6 @@ private:
 
   raw_fd_ostream *OS;
   SPDIR *IR;
-  uint64_t VectorLength;
 
   unsigned EQUCount;
   unsigned HDLCount;

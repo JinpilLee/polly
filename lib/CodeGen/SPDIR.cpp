@@ -34,42 +34,46 @@ static int KernelNumCount = 0;
 
 SPDInstr *SPDInstr::get(Instruction *I,
                         const ScopStmt *Stmt, SPDIR *IR) {
-  int64_t StreamOffset = 0;
-  if (I->mayReadOrWriteMemory()) {
+  if (I->mayWriteToMemory()) {
+    return new SPDInstr(I, Stmt, IR, 0);
+  }
+
+  if (I->mayReadFromMemory()) {
     MemoryAccess *MA = Stmt->getArrayAccessOrNULLFor(I);
     const SPDArrayInfo *AI = IR->getArrayInfo(MA->getOriginalBaseAddr());
-
     std::vector<int64_t> DimAccList;
     int64_t DimAcc = 1;
     for (uint64_t DimSize : *AI) {
-      DimAccList.insert(DimAccList.begin(), DimAcc);
+      DimAccList.push_back(DimAcc);
       DimAcc *= DimSize;
     }
 
-    unsigned Num = MA->getNumSubscripts();
-    for (unsigned i = 0; i < Num; i++) {
+    SPDDomainInfo *DI = IR->getDomainInfo();
+    int Num = MA->getNumSubscripts();
+    int64_t StreamOffset = 0;
+    for (int i = 0; i < Num; i++) {
 // FIXME assumption: subscript expr is add
       const SCEVAddRecExpr *SExpr
-        = dyn_cast<SCEVAddRecExpr>(MA->getSubscript(i));
+        = dyn_cast<SCEVAddRecExpr>(MA->getSubscript(Num - 1 - i));
       assert(((SExpr != nullptr) && (SExpr->isAffine())) &&
              "array subscripts should be expressed by an affine function");
 
 // FIXME current impl only allows {start_const,+,1}<loop>
-      const SCEV *StepExpr = SExpr->getStepRecurrence(*(Stmt->getParent()->getSE()));
+      const SCEVConstant *StartExpr
+        = dyn_cast<SCEVConstant>(SExpr->getStart());
+      assert((StartExpr != nullptr) &&
+             "array subscripts should be constants");
+
+      const SCEV *StepExpr
+        = SExpr->getStepRecurrence(*(Stmt->getParent()->getSE()));
       assert(StepExpr->isOne() && "FIXME: currently StepExpr should be 1");
 
-      const SCEVConstant *StartExpr = dyn_cast<SCEVConstant>(SExpr->getStart());
-      assert((StartExpr != nullptr) && "array subscripts should be constants");
-
-      int64_t DimStartValue = StartExpr->getValue()->getSExtValue();
-      std::cerr << "DimStartValue: " << DimStartValue << "\n";
-      std::cerr << "DimAcc: " << DimAccList[i] << "\n";
-
-// FIXME this should consider index domain (start index)
-      StreamOffset += (DimStartValue * DimAccList[i]);
+      int64_t SubscriptStart = StartExpr->getValue()->getSExtValue();
+      int64_t DomainStart = DI->getStart(i);
+      StreamOffset += (SubscriptStart - DomainStart) * DimAccList[i];
+      printf("[%d] diff = %ld | %ld\n", i, SubscriptStart - DomainStart, StreamOffset);
     }
 
-    std::cerr << "StreamOffset: " << StreamOffset << "\n";
     return new SPDInstr(I, Stmt, IR, StreamOffset);
   }
 
@@ -160,7 +164,7 @@ SPDStreamInfo::SPDStreamInfo(uint32_t NumArrays, int NumDims, uint64_t *L)
 }
 
 SPDIR::SPDIR(const Scop &S, LoopInfo &LI, ScalarEvolution &SE)
-  : KernelNum(KernelNumCount) {
+  : KernelNum(KernelNumCount), DI(nullptr) {
   KernelNumCount++;
 
 // FIXME temporary limitation
@@ -168,6 +172,7 @@ SPDIR::SPDIR(const Scop &S, LoopInfo &LI, ScalarEvolution &SE)
          "current implementation allows single ScopStmt");
 
 // Analysis
+// 1. generates steam info
   int Offset = 0;
   for (const ScopStmt &Stmt : S) {
     for (const MemoryAccess *MA : Stmt) {
@@ -190,6 +195,11 @@ SPDIR::SPDIR(const Scop &S, LoopInfo &LI, ScalarEvolution &SE)
   if (ReadStream->getAllocSize() !=
       WriteStream->getAllocSize()) {
     llvm_unreachable("read/write stream should have the same size");
+  }
+
+// 2. generates write domain
+  for (const ScopStmt &Stmt : S) {
+    generateWriteDomain(Stmt);
   }
 
 // IR Generation
@@ -365,6 +375,108 @@ void SPDIR::createWriteStreamInfo() {
 
   WriteStream = new SPDStreamInfo(NumArrays, NumDims, DimSizeArray);
   delete[] DimSizeArray;
+}
+
+static isl_stat getConstantFromAff(__isl_take isl_set *Domain,
+                                   __isl_take isl_aff *Aff, void *User) {
+  long *Res = static_cast<long *>(User);
+  isl_val *V = isl_aff_get_constant_val(Aff);
+  *Res = isl_val_get_num_si(V);
+  isl_set_free(Domain);
+  isl_aff_free(Aff);
+  isl_val_free(V);
+  return isl_stat_ok;
+}
+
+// FIXME temporary impl
+std::vector<long> SPDIR::getLoopTripCounts(const ScopStmt &Stmt) const {
+  std::vector<long> Ret;
+  isl_set *SD = Stmt.getDomain();
+  for (unsigned i = 0; i < isl_set_dim(SD, isl_dim_set); i++) {
+// get max
+    isl_pw_aff *Max = isl_set_dim_max(isl_set_copy(SD), i);
+    if (!(isl_pw_aff_is_cst(Max) && (isl_pw_aff_n_piece(Max) == 1))) {
+      llvm_unreachable("cannot detect loop bound constant");
+    }
+
+    long MaxVal = 0;
+    isl_pw_aff_foreach_piece(Max, getConstantFromAff, &MaxVal); 
+    isl_pw_aff_free(Max);
+
+// get min
+    isl_pw_aff *Min = isl_set_dim_min(isl_set_copy(SD), i);
+    if (!(isl_pw_aff_is_cst(Min) && (isl_pw_aff_n_piece(Min) == 1))) {
+      llvm_unreachable("cannot detect loop bound constant");
+    }
+
+    long MinVal = 0;
+    isl_pw_aff_foreach_piece(Min, getConstantFromAff, &MinVal); 
+    isl_pw_aff_free(Min);
+
+// add value
+    Ret.insert(Ret.begin(), MaxVal - MinVal + 1);
+  }
+
+  isl_set_free(SD);
+
+  return Ret;
+}
+
+void SPDIR::generateWriteDomain(const ScopStmt &Stmt) {
+  std::vector<long> LoopTripCounts = getLoopTripCounts(Stmt);
+
+  BasicBlock *BB = Stmt.getBasicBlock();
+  for (BasicBlock::iterator IIB = BB->begin(), IIE = BB->end();
+       IIB != IIE; ++IIB) {
+    Instruction &I = *IIB;
+    if (I.mayWriteToMemory()) {
+      MemoryAccess *MA = Stmt.getArrayAccessOrNULLFor(&I);
+      unsigned Num = MA->getNumSubscripts();
+      uint64_t *StartList = new uint64_t[Num];
+      uint64_t *EndList = new uint64_t[Num];
+      uint64_t *StrideList = new uint64_t[Num];
+      for (unsigned i = 0; i < Num; i++) {
+// FIXME assumption: subscript expr is add
+        const SCEVAddRecExpr *SExpr
+          = dyn_cast<SCEVAddRecExpr>(MA->getSubscript(Num - 1 - i));
+        assert(((SExpr != nullptr) && (SExpr->isAffine())) &&
+               "array subscripts should be expressed by an affine function");
+
+// FIXME current impl only allows {start_const,+,1}<loop>
+        const SCEVConstant *StartExpr
+          = dyn_cast<SCEVConstant>(SExpr->getStart());
+        assert((StartExpr != nullptr) &&
+               "array subscripts should be constants");
+
+        const SCEV *StepExpr
+          = SExpr->getStepRecurrence(*(Stmt.getParent()->getSE()));
+        assert(StepExpr->isOne() && "FIXME: currently StepExpr should be 1");
+
+        StartList[i]
+          = StartExpr->getValue()->getSExtValue();
+        EndList[i]
+          = StartList[i] + LoopTripCounts[i] - 1;
+        StrideList[i] = 1;
+      }
+
+      SPDDomainInfo *CurrentDI
+        = new SPDDomainInfo(Num, StartList, EndList, StrideList);
+      if (DI == nullptr) {
+        DI = CurrentDI;
+      }
+      else {
+        if (!DI->equals(CurrentDI)) {
+          llvm_unreachable("all writes should have the same domain");
+        }
+
+        delete CurrentDI;
+      }
+
+      delete[] StartList;
+      delete[] EndList;
+      delete[] StrideList;
+    }
+  }
 }
 
 void SPDIR::removeDeadInstrs() {

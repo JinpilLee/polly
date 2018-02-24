@@ -46,6 +46,8 @@ public:
   Instruction *getLLVMInstr() const { return LLVMInstr; }
   MemoryAccess *getMemoryAccess() const;
   int64_t getStreamOffset() const { return StreamOffset; }
+// FIXME temporary, meybe not necessary
+  const ScopStmt *getStmt() const { return ParentStmt; }
 
 private:
   int64_t StreamOffset;
@@ -81,46 +83,41 @@ private:
   std::vector<std::uint64_t> DimSizeList;
 };
 
-class SPDDomainExpr {
-public:
-  SPDDomainExpr(uint64_t SI, uint64_t EI, uint64_t S)
-    : StartIndex(SI), EndIndex(EI), Stride(S) {}
-
-  uint64_t getStart() const { return StartIndex; }
-  uint64_t getEnd() const { return EndIndex; }
-  uint64_t getStride() const { return Stride; }
-
-private:
-  uint64_t StartIndex;
-  uint64_t EndIndex;
-  uint64_t Stride;
-};
-
 class SPDDomainInfo {
 public:
-  SPDDomainInfo(unsigned NumDims,
-                uint64_t *StartList,
-                uint64_t *EndList,
-                uint64_t *StrideList) {
-    for (unsigned i = 0; i < NumDims; i++) {
-      DomainExprList.push_back(new SPDDomainExpr(StartList[i],
-                                                 EndList[i],
-                                                 StrideList[i]));
+  SPDDomainInfo(int N,
+                uint64_t *Starts,
+                uint64_t *Ends,
+                uint64_t *Strides) : NumDims(N) {
+    for (int i = 0; i < NumDims; i++) {
+      StartList.push_back(Starts[i]);
+      EndList.push_back(Ends[i]);
+      StrideList.push_back(Strides[i]);
     }
   }
 
-  ~SPDDomainInfo() {
-    for (SPDDomainExpr *DE : *this) {
-      delete DE;
-    }
-  }
+  int getNumDims() const { return NumDims; }
+  uint64_t getStart(int i) const { return StartList[i]; }
+  uint64_t getEnd(int i) const { return EndList[i]; }
+  uint64_t getStride(int i) const { return StrideList[i]; }
 
-  typedef std::vector<SPDDomainExpr *>::const_iterator const_iterator;
-  const_iterator begin() const { return DomainExprList.begin(); }
-  const_iterator end() const { return DomainExprList.end(); }
+  bool equals(SPDDomainInfo *DI) {
+    if (DI->getNumDims() != getNumDims()) return false;
+
+    for (int i = 0; i < NumDims; i++) {
+      if (DI->getStart(i) != getStart(i)) return false;
+      if (DI->getEnd(i) != getEnd(i)) return false;
+      if (DI->getStride(i) != getStride(i)) return false;
+    }
+
+    return true;
+  }
 
 private:
-  std::vector<SPDDomainExpr *> DomainExprList;
+  int NumDims;
+  std::vector<uint64_t> StartList;
+  std::vector<uint64_t> EndList;
+  std::vector<uint64_t> StrideList;
 };
 
 class SPDStreamInfo {
@@ -152,7 +149,9 @@ public:
   SPDIR(const Scop &S, LoopInfo &LI, ScalarEvolution &SE);
 
   ~SPDIR() {
-    delete DI;
+    if (DI != nullptr) {
+      delete DI;
+    }
 
     for (SPDInstr *I : InstrList) {
       delete I;
@@ -190,6 +189,7 @@ public:
   SPDStreamInfo *getWriteStream() const { return WriteStream; }
 
   const SPDArrayInfo *getArrayInfo(Value *V) { return ArrayInfoTable[V]; }
+  SPDDomainInfo *getDomainInfo() const { return DI; }
 
   void dump() const;
 
@@ -209,6 +209,8 @@ private:
   void addWriteAccess(const MemoryAccess *MA, int &Offset);
   void createReadStreamInfo();
   void createWriteStreamInfo();
+  std::vector<long> getLoopTripCounts(const ScopStmt &Stmt) const;
+  void generateWriteDomain(const ScopStmt &Stmt);
   void removeDeadInstrs();
 };
 } // end namespace polly

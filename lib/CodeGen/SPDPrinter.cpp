@@ -18,7 +18,7 @@ void SPDPrinter::emitInParams(uint64_t VL) {
 
     Iter++;
     if (Iter == IR->read_end()) {
-      *OS << "sop, eop};\n";
+      *OS << "attr, sop, eop};\n";
       break;
     }
   }
@@ -37,7 +37,7 @@ void SPDPrinter::emitOutParams(uint64_t VL) {
 
     Iter++;
     if (Iter == IR->write_end()) {
-      *OS << "sop, eop};\n";
+      *OS << "attr, sop, eop};\n";
       break;
     }
   }
@@ -142,8 +142,10 @@ unsigned SPDPrinter::getValueNum(Value *V) {
 void SPDPrinter::emitValue(Value *V, uint64_t VL) {
   MemInstrMapTy::iterator Iter = MemInstrMap.find(V);
   if (Iter != MemInstrMap.end()) {
-    // FIXME we need to consider array subscript
-    MemoryAccess *MA = Iter->second;
+    SPDInstr *I = Iter->second;
+    MemoryAccess *MA = I->getMemoryAccess();
+    int64_t StreamOffset = I->getStreamOffset();
+    assert((StreamOffset == 0) && "array subscript is not allowed here");
     *OS << MA->getOriginalBaseAddr()->getName().str() << VL;
   }
   else if (isa<ConstantInt>(V)) {
@@ -157,7 +159,8 @@ void SPDPrinter::emitValue(Value *V, uint64_t VL) {
       *OS << V->getName().str() << VL;
     }
     else {
-      *OS << getValueNum(V) << VL;
+// FIXME requires unique prefix
+      *OS << "Val" << getValueNum(V) << VL;
     }
   }
 }
@@ -185,22 +188,70 @@ void SPDPrinter::emitOpcode(unsigned Opcode) {
 }
 
 void SPDPrinter::emitEQUPrefix() {
-    *OS << "EQU       equ" << EQUCount << ", ";
-    EQUCount++;
+  *OS << "EQU       equ" << EQUCount << ", ";
+  EQUCount++;
+}
+
+static Value *getUniqueMemRead(Value *V, const ScopStmt *Stmt) {
+  Instruction *Instr = dyn_cast<Instruction>(V);
+  if (Instr->mayReadFromMemory()) {
+    MemoryAccess *MA = Stmt->getArrayAccessOrNULLFor(Instr);
+    return MA->getOriginalBaseAddr();
+  }
+
+  Value *Ret = nullptr;
+  for (unsigned i = 0; i < Instr->getNumOperands(); i++) {
+    if (Ret == nullptr) {
+      Ret = getUniqueMemRead(Instr->getOperand(i), Stmt);
+    }
+    else {
+      Value *Temp = getUniqueMemRead(Instr->getOperand(i), Stmt);
+      if (Temp != Ret) return nullptr;
+    }
+  }
+
+  return Ret;
 }
 
 void SPDPrinter::emitInstruction(SPDInstr *I, uint64_t VL) {
   Instruction *Instr = I->getLLVMInstr();
   if (Instr->mayReadFromMemory()) {
-    MemInstrMap[dyn_cast<Value>(Instr)] = I->getMemoryAccess();
+// FIXME need this?
+    int64_t StreamOffset = I->getStreamOffset();
+    if (StreamOffset == 0) {
+      MemInstrMap[dyn_cast<Value>(Instr)] = I;
+    }
+    else {
+      emitEQUPrefix();
+      emitValue(dyn_cast<Value>(Instr), VL);
+      *OS << " = ";
+      MemoryAccess *MA = I->getMemoryAccess();
+      *OS << MA->getOriginalBaseAddr()->getName().str() << VL;
+      *OS << "<<" << StreamOffset << ">>\n";
+    }
   }
   else if (Instr->mayWriteToMemory()) {
     emitEQUPrefix();
     MemoryAccess *MA = I->getMemoryAccess();
     *OS << MA->getOriginalBaseAddr()->getName().str() << VL;
-    *OS << " = ";
+    *OS << " = mux(";
+// false value
+// FIXME current implementation uses array read instead of original value
+    Value *UniqueMemRead = getUniqueMemRead(Instr->getOperand(0),
+                                            I->getStmt());
+    if (UniqueMemRead == nullptr) {
+      llvm_unreachable("cannot find a original value for masking output");
+    }
+    else {
+      emitValue(UniqueMemRead, VL);
+    }
+// true value
+    *OS << ", "; 
     emitValue(Instr->getOperand(0), VL);
-    *OS << ";\n";
+// condition
+// FIXME requires name check "attr"
+//       more complex condition can improve coverage
+    *OS << ", attr[0]);\n";
   }
   else if (Instr->isBinaryOp()) {
     emitEQUPrefix();
@@ -216,8 +267,8 @@ void SPDPrinter::emitInstruction(SPDInstr *I, uint64_t VL) {
   }
 }
 
-SPDPrinter::SPDPrinter(SPDIR *I, uint64_t VL)
-  : IR(I), VectorLength(VL), EQUCount(0), ValueCount(0) {
+SPDPrinter::SPDPrinter(SPDIR *I, uint64_t VL, uint64_t UC)
+  : IR(I), EQUCount(0), ValueCount(0) {
   std::error_code EC;
   std::string KernelName("kernel");
   KernelName += std::to_string(IR->getKernelNum());
@@ -230,14 +281,38 @@ SPDPrinter::SPDPrinter(SPDIR *I, uint64_t VL)
 
   for (auto Iter = IR->instr_begin(); Iter != IR->instr_end(); Iter++) {
     SPDInstr *Instr = *Iter;
-    for (uint64_t i = 0; i < VectorLength; i++) {
+    for (uint64_t i = 0; i < VL; i++) {
       emitInstruction(Instr, i);
     }
   }
 
-  *OS << "DRCT (Mo::sop, Mo::eop) = (Mi::sop, Mi::eop);\n";
+// FIXME attr should be optional
+  *OS <<
+    "DRCT (Mo::attr, Mo::sop, Mo::eop) = (MI::attr, Mi::sop, Mi::eop);\n";
+
+  delete OS;
+
+  assert((UC > 0) && "UC should be greater than 0");
+  if (UC > 1) {
+    std::string UnrolledKernelName("UC");
+    UnrolledKernelName += std::to_string(UC);
+    UnrolledKernelName += "_" + KernelName;
+    OS = new raw_fd_ostream(UnrolledKernelName + ".spd",
+                            EC, sys::fs::F_None);
+
+    emitModuleDecl(UnrolledKernelName, VL);
+    for (uint64_t i = 0; i < UC; i++) {
+      *OS << "EQU       equ" << i << ", ";
+// FIXME complete here
+      *OS << KernelName << "(###########)\n";
+    }
+
+    *OS <<
+      "DRCT (Mo::attr, Mo::sop, Mo::eop) = (MI::attr, Mi::sop, Mi::eop);\n";
+
+    delete OS;
+  }
 }
 
 SPDPrinter::~SPDPrinter() {
-  delete OS;
 }
