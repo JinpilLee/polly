@@ -8,7 +8,7 @@ using namespace polly;
 void SPDPrinter::emitInParams(uint64_t VL) {
   if (IR->getNumReads() == 0) return;
 
-  *OS << "Main_In   {Mi::";
+  *OS << "Main_In  {Mi::";
   auto Iter = IR->read_begin();
   while (true) {
     SPDArrayInfo *AI = *Iter;
@@ -27,7 +27,7 @@ void SPDPrinter::emitInParams(uint64_t VL) {
 void SPDPrinter::emitOutParams(uint64_t VL) {
   if (IR->getNumWrites() == 0) return;
 
-  *OS << "Main_Out  {Mo::";
+  *OS << "Main_Out {Mo::";
   auto Iter = IR->write_begin();
   while (true) {
     SPDArrayInfo *AI = *Iter;
@@ -45,7 +45,7 @@ void SPDPrinter::emitOutParams(uint64_t VL) {
 
 void SPDPrinter::emitModuleDecl(std::string &KernelName, uint64_t VL) {
 // FIXME needs name
-  *OS << "Name      " << KernelName << ";\n";
+  *OS << "Name     " << KernelName << ";\n";
 
   emitInParams(VL);
   emitOutParams(VL);
@@ -61,70 +61,28 @@ void SPDPrinter::emitConstantInt(ConstantInt *CI) {
   }
 }
 
-// copied from WriteConstantInternal()@IR/AsmPrinter.cpp
 void SPDPrinter::emitConstantFP(ConstantFP *CFP) {
-  if (&CFP->getValueAPF().getSemantics() == &APFloat::IEEEsingle() ||
-      &CFP->getValueAPF().getSemantics() == &APFloat::IEEEdouble()) {
-    bool ignored;
-    bool isDouble = &CFP->getValueAPF().getSemantics()==&APFloat::IEEEdouble();
-    bool isInf = CFP->getValueAPF().isInfinity();
-    bool isNaN = CFP->getValueAPF().isNaN();
-    if (!isInf && !isNaN) {
-      double Val = isDouble ? CFP->getValueAPF().convertToDouble() :
-                              CFP->getValueAPF().convertToFloat();
-      SmallString<128> StrVal;
-      raw_svector_ostream(StrVal) << Val;
-
-      if ((StrVal[0] >= '0' && StrVal[0] <= '9') ||
-          ((StrVal[0] == '-' || StrVal[0] == '+') &&
-           (StrVal[1] >= '0' && StrVal[1] <= '9'))) {
-        if (APFloat(APFloat::IEEEdouble(), StrVal).convertToDouble() == Val) {
-          *OS << StrVal;
+  const APFloat &APF = CFP->getValueAPF();
+  if (&APF.getSemantics() == &APFloat::IEEEsingle()) {
+    if (!(APF.isInfinity() || APF.isNaN())) {
+      std::string FloatValueStr = std::to_string(APF.convertToFloat());
+      for (auto Ch : FloatValueStr) {
+        if (Ch == 'e') {
           return;
         }
+        else if (Ch == '+') {
+          continue;
+        }
+        else {
+          *OS << Ch;
+        }
       }
+
+      return;
     }
-    static_assert(sizeof(double) == sizeof(uint64_t),
-                  "assuming that double is 64 bits!");
-    APFloat apf = CFP->getValueAPF();
-    if (!isDouble)
-      apf.convert(APFloat::IEEEdouble(), APFloat::rmNearestTiesToEven,
-                        &ignored);
-    *OS << format_hex(apf.bitcastToAPInt().getZExtValue(), 0, /*Upper=*/true);
-    return;
   }
 
-  *OS << "0x";
-  APInt API = CFP->getValueAPF().bitcastToAPInt();
-  if (&CFP->getValueAPF().getSemantics() == &APFloat::x87DoubleExtended()) {
-    *OS << 'K';
-    *OS << format_hex_no_prefix(API.getHiBits(16).getZExtValue(), 4,
-                               /*Upper=*/true);
-    *OS << format_hex_no_prefix(API.getLoBits(64).getZExtValue(), 16,
-                               /*Upper=*/true);
-  }
-  else if (&CFP->getValueAPF().getSemantics() == &APFloat::IEEEquad()) {
-    *OS << 'L';
-    *OS << format_hex_no_prefix(API.getLoBits(64).getZExtValue(), 16,
-                               /*Upper=*/true);
-    *OS << format_hex_no_prefix(API.getHiBits(64).getZExtValue(), 16,
-                               /*Upper=*/true);
-  }
-  else if (&CFP->getValueAPF().getSemantics() == &APFloat::PPCDoubleDouble()) {
-    *OS << 'M';
-    *OS << format_hex_no_prefix(API.getLoBits(64).getZExtValue(), 16,
-                               /*Upper=*/true);
-    *OS << format_hex_no_prefix(API.getHiBits(64).getZExtValue(), 16,
-                               /*Upper=*/true);
-  }
-  else if (&CFP->getValueAPF().getSemantics() == &APFloat::IEEEhalf()) {
-    *OS << 'H';
-    *OS << format_hex_no_prefix(API.getZExtValue(), 4,
-                               /*Upper=*/true);
-  }
-  else {
-    llvm_unreachable("unsupported floating point type");
-  }
+  llvm_unreachable("unsupported floating point type");
 }
 
 unsigned SPDPrinter::getValueNum(Value *V) {
@@ -160,7 +118,7 @@ void SPDPrinter::emitValue(Value *V, uint64_t VL) {
     }
     else {
 // FIXME requires unique prefix
-      *OS << "Val" << getValueNum(V) << VL;
+      *OS << "xxxv" << getValueNum(V) << VL;
     }
   }
 }
@@ -188,12 +146,21 @@ void SPDPrinter::emitOpcode(unsigned Opcode) {
 }
 
 void SPDPrinter::emitEQUPrefix() {
-  *OS << "EQU       equ" << EQUCount << ", ";
+  *OS << "EQU      equ" << EQUCount << ", ";
   EQUCount++;
+}
+
+void SPDPrinter::emitHDLPrefix() {
+  *OS << "HDL      hdl" << EQUCount << ", ";
+  HDLCount++;
 }
 
 static Value *getUniqueMemRead(Value *V, const ScopStmt *Stmt) {
   Instruction *Instr = dyn_cast<Instruction>(V);
+  if (Instr == nullptr) {
+    return nullptr;
+  }
+
   if (Instr->mayReadFromMemory()) {
     MemoryAccess *MA = Stmt->getArrayAccessOrNULLFor(Instr);
     return MA->getOriginalBaseAddr();
@@ -206,7 +173,8 @@ static Value *getUniqueMemRead(Value *V, const ScopStmt *Stmt) {
     }
     else {
       Value *Temp = getUniqueMemRead(Instr->getOperand(i), Stmt);
-      if (Temp != Ret) return nullptr;
+      if (Temp == nullptr) continue;
+      else if (Temp != Ret) return nullptr;
     }
   }
 
@@ -222,12 +190,25 @@ void SPDPrinter::emitInstruction(SPDInstr *I, uint64_t VL) {
       MemInstrMap[dyn_cast<Value>(Instr)] = I;
     }
     else {
-      emitEQUPrefix();
+      int64_t OffsetAbs
+        = (StreamOffset > 0) ? StreamOffset : -StreamOffset;
+
+      emitHDLPrefix();
+      *OS << OffsetAbs + 2 << " ";
       emitValue(dyn_cast<Value>(Instr), VL);
       *OS << " = ";
-      MemoryAccess *MA = I->getMemoryAccess();
-      *OS << MA->getOriginalBaseAddr()->getName().str() << VL;
-      *OS << "<<" << StreamOffset << ">>\n";
+      if (StreamOffset > 0) {
+        *OS << "mStreamFoward(";
+        MemoryAccess *MA = I->getMemoryAccess();
+        *OS << MA->getOriginalBaseAddr()->getName().str() << VL;
+        *OS << ", " << OffsetAbs << ");\n";
+      }
+      else {
+        *OS << "mStreamBackward(";
+        MemoryAccess *MA = I->getMemoryAccess();
+        *OS << MA->getOriginalBaseAddr()->getName().str() << VL;
+        *OS << ", " << OffsetAbs << ");\n";
+      }
     }
   }
   else if (Instr->mayWriteToMemory()) {
@@ -251,7 +232,7 @@ void SPDPrinter::emitInstruction(SPDInstr *I, uint64_t VL) {
 // condition
 // FIXME requires name check "attr"
 //       more complex condition can improve coverage
-    *OS << ", attr[0]);\n";
+    *OS << ", Mi::attr[0]);\n";
   }
   else if (Instr->isBinaryOp()) {
     emitEQUPrefix();
@@ -267,8 +248,75 @@ void SPDPrinter::emitInstruction(SPDInstr *I, uint64_t VL) {
   }
 }
 
+void SPDPrinter::emitUnrollModule(std::string &UnrolledKernelName,
+                                  std::string &KernelName,
+                                  uint64_t VL, uint64_t UC) {
+  assert((IR->getNumReads() == IR->getNumWrites()) &&
+         "number of read/write arrays are not equal");
+
+// DECL part
+  emitModuleDecl(UnrolledKernelName, VL);
+
+// EQU Part
+  for (uint64_t i = 0; i < UC; i++) {
+// writes
+    *OS << "HDL      core" << i << ", ###, (";
+    int Id = 0;
+    for (auto Iter = IR->write_begin();
+         Iter != IR->write_end(); Iter++, Id++) {
+      SPDArrayInfo *AI = *Iter;
+      for (uint64_t j = 0; j < VL; j++) {
+        if (i == (UC - 1)) {
+          *OS << AI->getArrayRef()->getName().str() << j;
+        }
+        else {
+          *OS << "xxxt" << Id << i << j;
+        }
+
+        *OS << ", ";
+      }
+    }
+
+    if (i == (UC - 1)) {
+      *OS << "Mo::attr, Mo::sop, Mo::eop) = ";
+    }
+    else {
+      *OS << "xxxt" << Id << i << ", "; Id++; // attr
+      *OS << "xxxt" << Id << i << ", "; Id++; // sop
+      *OS << "xxxt" << Id << i << ") = ";     // eop
+    }
+
+// reads
+    *OS << KernelName << "(";
+    Id = 0;
+    for (auto Iter = IR->read_begin();
+         Iter != IR->read_end(); Iter++, Id++) {
+      SPDArrayInfo *AI = *Iter;
+      for (uint64_t j = 0; j < VL; j++) {
+        if (i == 0) {
+          *OS << AI->getArrayRef()->getName().str() << j;
+        }
+        else {
+          *OS << "xxxt" << Id << i - 1 << j;
+        }
+
+        *OS << ", ";
+      }
+    }
+
+    if (i == 0) {
+      *OS << "Mi::attr, Mi::sop, Mi::eop);\n";
+    }
+    else {
+      *OS << "xxxt" << Id << i - 1 << ", "; Id++; // attr
+      *OS << "xxxt" << Id << i - 1 << ", "; Id++; // sop
+      *OS << "xxxt" << Id << i - 1 << ");\n";     // eop
+    }
+  }
+}
+
 SPDPrinter::SPDPrinter(SPDIR *I, uint64_t VL, uint64_t UC)
-  : IR(I), EQUCount(0), ValueCount(0) {
+  : IR(I), EQUCount(0), HDLCount(0), ValueCount(0) {
   std::error_code EC;
   std::string KernelName("kernel");
   KernelName += std::to_string(IR->getKernelNum());
@@ -288,7 +336,7 @@ SPDPrinter::SPDPrinter(SPDIR *I, uint64_t VL, uint64_t UC)
 
 // FIXME attr should be optional
   *OS <<
-    "DRCT (Mo::attr, Mo::sop, Mo::eop) = (MI::attr, Mi::sop, Mi::eop);\n";
+    "DRCT     (Mo::attr, Mo::sop, Mo::eop) = (MI::attr, Mi::sop, Mi::eop);\n";
 
   delete OS;
 
@@ -300,19 +348,8 @@ SPDPrinter::SPDPrinter(SPDIR *I, uint64_t VL, uint64_t UC)
     OS = new raw_fd_ostream(UnrolledKernelName + ".spd",
                             EC, sys::fs::F_None);
 
-    emitModuleDecl(UnrolledKernelName, VL);
-    for (uint64_t i = 0; i < UC; i++) {
-      *OS << "EQU       equ" << i << ", ";
-// FIXME complete here
-      *OS << KernelName << "(###########)\n";
-    }
-
-    *OS <<
-      "DRCT (Mo::attr, Mo::sop, Mo::eop) = (MI::attr, Mi::sop, Mi::eop);\n";
+    emitUnrollModule(UnrolledKernelName, KernelName, VL, UC);
 
     delete OS;
   }
-}
-
-SPDPrinter::~SPDPrinter() {
 }

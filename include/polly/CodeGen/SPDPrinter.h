@@ -37,7 +37,6 @@ typedef std::map<Value *, SPDInstr *> MemInstrMapTy;
 class SPDPrinter {
 public:
   SPDPrinter(SPDIR *I, uint64_t VL, uint64_t UC);
-  ~SPDPrinter();
 
 // FIXME
 // unsigned getLatency();
@@ -53,7 +52,11 @@ private:
   void emitValue(Value *V, uint64_t VL);
   void emitOpcode(unsigned Opcode);
   void emitEQUPrefix();
+  void emitHDLPrefix();
   void emitInstruction(SPDInstr *Instr, uint64_t VL);
+  void emitUnrollModule(std::string &UnrolledKernelName,
+                        std::string &KernelName,
+                        uint64_t VL, uint64_t UC);
 
   raw_fd_ostream *OS;
   SPDIR *IR;

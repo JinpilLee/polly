@@ -71,7 +71,6 @@ SPDInstr *SPDInstr::get(Instruction *I,
       int64_t SubscriptStart = StartExpr->getValue()->getSExtValue();
       int64_t DomainStart = DI->getStart(i);
       StreamOffset += (SubscriptStart - DomainStart) * DimAccList[i];
-      printf("[%d] diff = %ld | %ld\n", i, SubscriptStart - DomainStart, StreamOffset);
     }
 
     return new SPDInstr(I, Stmt, IR, StreamOffset);
@@ -195,6 +194,11 @@ SPDIR::SPDIR(const Scop &S, LoopInfo &LI, ScalarEvolution &SE)
   if (ReadStream->getAllocSize() !=
       WriteStream->getAllocSize()) {
     llvm_unreachable("read/write stream should have the same size");
+  }
+
+// FIXME temporary limitation
+  if (getNumReads() != getNumWrites()) {
+    llvm_unreachable("number of read/write arrays should be equal");
   }
 
 // 2. generates write domain
