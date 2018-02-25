@@ -151,7 +151,7 @@ void SPDPrinter::emitEQUPrefix() {
 }
 
 void SPDPrinter::emitHDLPrefix() {
-  *OS << "HDL      hdl" << EQUCount << ", ";
+  *OS << "HDL      hdl" << HDLCount << ", ";
   HDLCount++;
 }
 
