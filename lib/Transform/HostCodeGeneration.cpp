@@ -208,6 +208,9 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
     uint64_t VectorLength
       = dyn_cast<ConstantInt>(CM->getValue())->getZExtValue();
     CM = dyn_cast<ConstantAsMetadata>(Node->getOperand(3));
+    uint64_t UnrollCount
+      = dyn_cast<ConstantInt>(CM->getValue())->getZExtValue();
+    CM = dyn_cast<ConstantAsMetadata>(Node->getOperand(4));
     uint64_t SwitchInOut
       = dyn_cast<ConstantInt>(CM->getValue())->getZExtValue();
 
@@ -217,7 +220,7 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
     auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
     SPDIR IR(*S, LI, SE);
 // FIXME for unroll test
-    SPDPrinter Print(&IR, VectorLength, 3);
+    SPDPrinter Print(&IR, VectorLength, UnrollCount);
 
     // FIXME consider better impl than using counter
     unsigned InstCount = 0;

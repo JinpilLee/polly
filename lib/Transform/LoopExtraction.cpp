@@ -34,6 +34,7 @@ bool LoopExtraction::runOnLoop(Loop *L, LPPassManager &) {
   Instruction *FirstNonPHI = Header->getFirstNonPHI();
   uint64_t RegionNumber = 0;
   uint64_t VectorLength = 1;
+  uint64_t UnrollCount = 1;
   uint64_t SwitchInOut = 0;
   CallInst *CI = dyn_cast<CallInst>(FirstNonPHI);
   if (CI == nullptr) {
@@ -56,6 +57,13 @@ bool LoopExtraction::runOnLoop(Loop *L, LPPassManager &) {
       VectorLength = Op->getZExtValue();
 
       Op = dyn_cast<ConstantInt>(CI->getOperand(2));
+      if (Op == nullptr) {
+        llvm_unreachable("unroll count is not a constant integer");
+      }
+
+      UnrollCount = Op->getZExtValue();
+
+      Op = dyn_cast<ConstantInt>(CI->getOperand(3));
       if (Op == nullptr) {
         llvm_unreachable("switch in/out is not a constant integer");
       }
@@ -134,6 +142,7 @@ bool LoopExtraction::runOnLoop(Loop *L, LPPassManager &) {
         ValueAsMetadata::get(&*(L->getHeader()->begin())),
         ConstantAsMetadata::get(ConstantInt::get(Int64Ty, RegionNumber)),
         ConstantAsMetadata::get(ConstantInt::get(Int64Ty, VectorLength)),
+        ConstantAsMetadata::get(ConstantInt::get(Int64Ty, UnrollCount)),
         ConstantAsMetadata::get(ConstantInt::get(Int64Ty, SwitchInOut))
       };
       ExtractedFunc->setMetadata("polly_extracted_loop",
