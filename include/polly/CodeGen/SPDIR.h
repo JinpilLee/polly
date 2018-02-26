@@ -134,6 +134,7 @@ public:
 
     return Size * getStride();
   }
+  uint64_t getSize(int i) const { return DimSizeList[i]; }
 
   typedef std::vector<std::uint64_t>::const_iterator const_iterator;
   const_iterator begin() const { return DimSizeList.begin(); }

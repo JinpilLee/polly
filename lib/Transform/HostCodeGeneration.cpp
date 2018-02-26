@@ -26,6 +26,12 @@ using namespace polly;
 
 #define DEBUG_TYPE "polly-host-codegen"
 
+static void createRuntimeInitFunc(Module &M, IRBuilder<> &IRB) {
+  Type *VoidTy = Type::getVoidTy(M.getContext());
+  Value *Func = M.getOrInsertFunction("__spd_initialize", VoidTy);
+  IRB.CreateCall(Func);
+}
+
 static GlobalVariable *createAllocStreamFunc(SPDStreamInfo *SI,
                                              Module &M, IRBuilder<> &IRB) {
   Type *RetTy = Type::getFloatPtrTy(M.getContext());
@@ -79,27 +85,91 @@ static void createPackFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
   }
 }
 
-static void createRunKernelFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
-                                SPDStreamInfo *RSI, GlobalVariable *RSB,
-                                SPDStreamInfo *WSI, GlobalVariable *WSB,
+static void createPCIInFunc(Module &M, IRBuilder<> &IRB,
+                            SPDStreamInfo *SI, GlobalVariable *StreamBuffer) {
+  Type *RetTy = Type::getVoidTy(M.getContext());
+  Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
+  Type *Int64Ty = Type::getInt64Ty(M.getContext());
+
+  Value *Func
+    = M.getOrInsertFunction("__spd_pci_dma_to_FPGA", RetTy,
+                            FloatPtrTy, Int64Ty);
+
+  SmallVector<Value *, 8> Args;
+  Value *SB = IRB.CreateLoad(StreamBuffer);
+  Args.push_back(SB);
+  Args.push_back(IRB.getInt64(SI->getAllocSize()));
+  IRB.CreateCall(Func, Args);
+}
+
+static void createDomainAttrFunc(SPDDomainInfo &DI,
+                                 Module &M, IRBuilder<> &IRB,
+                                 SPDStreamInfo *SI,
+                                 GlobalVariable *StreamBuffer) {
+  Type *RetTy = Type::getVoidTy(M.getContext());
+  Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
+  Type *Int32Ty = Type::getInt32Ty(M.getContext());
+  Type *Int64Ty = Type::getInt64Ty(M.getContext());
+
+  Value *Func
+    = M.getOrInsertFunction("__spd_create_domain_2", RetTy,
+                            FloatPtrTy, Int32Ty,
+                            Int64Ty, Int64Ty, Int64Ty,
+                            Int64Ty, Int64Ty, Int64Ty);
+
+  SmallVector<Value *, 8> Args;
+  Value *SB = IRB.CreateLoad(StreamBuffer);
+  Args.push_back(SB);
+  Args.push_back(IRB.getInt32(SI->getStride()));
+
+// FIXME now supports only 2-dim arrays
+  int NumDims = DI.getNumDims();
+  assert((NumDims == 2) && "now supports only 2-dim arrays");
+  for (int i = 0; i < 2; i++) {
+    Args.push_back(IRB.getInt64(DI.getStart(i)));
+    Args.push_back(IRB.getInt64(DI.getEnd(i)));
+    Args.push_back(IRB.getInt64(SI->getSize(i)));
+  }
+
+  IRB.CreateCall(Func, Args);
+}
+
+static void createRunKernelFunc(Module &M, IRBuilder<> &IRB,
+                                SPDStreamInfo *RSI, SPDStreamInfo *WSI,
                                 uint64_t SwitchInOut) {
   Type *RetTy = Type::getVoidTy(M.getContext());
-  Type *FloatPtrPtrTy
-    = PointerType::getUnqual(Type::getFloatPtrTy(M.getContext()));
   Type *Int32Ty = Type::getInt32Ty(M.getContext());
   Type *Int64Ty = Type::getInt64Ty(M.getContext());
   
   Value *Func
     = M.getOrInsertFunction("__spd_run_kernel", RetTy,
-                            FloatPtrPtrTy, Int64Ty,
-                            FloatPtrPtrTy, Int64Ty,
-                            Int32Ty);
+                            Int64Ty, Int32Ty);
+
+  assert((RSI->getAllocSize() == WSI->getAllocSize()) &&
+         "in/out stream should have the same size");
 
   SmallVector<Value *, 8> Args;
-  Args.push_back(RSB);
   Args.push_back(IRB.getInt64(RSI->getAllocSize()));
-  Args.push_back(WSB);
-  Args.push_back(IRB.getInt64(WSI->getAllocSize()));
+  Args.push_back(IRB.getInt32(SwitchInOut));
+  IRB.CreateCall(Func, Args);
+}
+
+static void createPCIOutFunc(Module &M, IRBuilder<> &IRB,
+                             SPDStreamInfo *SI, GlobalVariable *StreamBuffer,
+                             uint64_t SwitchInOut) {
+  Type *RetTy = Type::getVoidTy(M.getContext());
+  Type *FloatPtrTy = Type::getFloatPtrTy(M.getContext());
+  Type *Int32Ty = Type::getInt32Ty(M.getContext());
+  Type *Int64Ty = Type::getInt64Ty(M.getContext());
+
+  Value *Func
+    = M.getOrInsertFunction("__spd_pci_dma_from_FPGA", RetTy,
+                            FloatPtrTy, Int64Ty, Int32Ty);
+
+  SmallVector<Value *, 8> Args;
+  Value *SB = IRB.CreateLoad(StreamBuffer);
+  Args.push_back(SB);
+  Args.push_back(IRB.getInt64(SI->getAllocSize()));
   Args.push_back(IRB.getInt32(SwitchInOut));
   IRB.CreateCall(Func, Args);
 }
@@ -148,6 +218,12 @@ static void createFreeStreamFunc(SPDIR &IR, Module &M, IRBuilder<> &IRB,
   Value *Func = M.getOrInsertFunction("__spd_free_stream", RetTy, FloatPtrTy);
   Value *SB = IRB.CreateLoad(StreamBuffer);
   IRB.CreateCall(Func, {SB});
+}
+
+static void createRuntimeFinFunc(Module &M, IRBuilder<> &IRB) {
+  Type *VoidTy = Type::getVoidTy(M.getContext());
+  Value *Func = M.getOrInsertFunction("__spd_finalize", VoidTy);
+  IRB.CreateCall(Func);
 }
 
 uint64_t HostCodeGeneration::getRegionNumber(Instruction *Instr) const {
@@ -240,25 +316,28 @@ bool HostCodeGeneration::runOnFunction(Function &F) {
       Instruction *InsertInstr = RegionBeginMap[RegionNumber];
       if (InsertInstr == nullptr) InsertInstr = Caller;
       IRBuilder<> IRB(InsertInstr); 
+      createRuntimeInitFunc(*M, IRB);
       GlobalVariable *ReadStreamBuffer
         = createAllocStreamFunc(RSI, *M, IRB);
       GlobalVariable *WriteStreamBuffer
         = createAllocStreamFunc(WSI, *M, IRB);
       createPackFunc(IR, *M, IRB, RSI, ReadStreamBuffer);
+      createDomainAttrFunc(*(IR.getDomainInfo()), *M,
+                           IRB, RSI, ReadStreamBuffer);
+      createPCIInFunc(*M, IRB, RSI, ReadStreamBuffer);
 
       // kernel run
       if (InsertInstr != Caller) IRB.SetInsertPoint(Caller);
-      createRunKernelFunc(IR, *M, IRB,
-                          RSI, ReadStreamBuffer,
-                          WSI, WriteStreamBuffer,
-                          SwitchInOut);
+      createRunKernelFunc(*M, IRB, RSI, WSI, SwitchInOut);
 
       // begion end
       InsertInstr = RegionEndMap[RegionNumber];
       if (InsertInstr != nullptr) IRB.SetInsertPoint(InsertInstr);
+      createPCIOutFunc(*M, IRB, WSI, WriteStreamBuffer, SwitchInOut);
       createUnpackFunc(IR, *M, IRB, WSI, WriteStreamBuffer);
       createFreeStreamFunc(IR, *M, IRB, ReadStreamBuffer);
       createFreeStreamFunc(IR, *M, IRB, WriteStreamBuffer);
+      createRuntimeFinFunc(*M, IRB);
 
       Caller->eraseFromParent();
 

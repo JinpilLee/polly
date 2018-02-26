@@ -156,7 +156,7 @@ void SPDArrayInfo::dump() const {
 }
 
 SPDStreamInfo::SPDStreamInfo(uint32_t NumArrays, int NumDims, uint64_t *L)
-  : Stride(NumArrays) {
+  : Stride(NumArrays + 1) { // last elmt is attr
   for (int i = 0; i < NumDims; i++) {
     DimSizeList.push_back(L[i]);
   }
