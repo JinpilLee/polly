@@ -40,9 +40,10 @@ static GlobalVariable *createAllocStreamFunc(SPDStreamInfo *SI,
   Value *Func = M.getOrInsertFunction("__spd_alloc_stream", RetTy, Int64Ty);
   CallInst *RetValue = IRB.CreateCall(Func, {IRB.getInt64(SI->getAllocSize())});
 
+// FIXME InternalLinkage is better?
   GlobalVariable *StreamBufferPtr
-    = new GlobalVariable(M, RetTy, false, GlobalValue::ExternalLinkage,
-                         nullptr, "__spd_stream");
+    = new GlobalVariable(M, RetTy, false, GlobalValue::CommonLinkage,
+                         Constant::getNullValue(RetTy), "__spd_stream");
 
   IRB.CreateStore(RetValue, StreamBufferPtr);
 
