@@ -18,7 +18,7 @@ void SPDPrinter::emitInParams(uint64_t VL) {
 
     Iter++;
     if (Iter == IR->read_end()) {
-      *OS << "attr, sop, eop};\n";
+      *OS << "iattr, sop, eop};\n";
       break;
     }
   }
@@ -37,7 +37,7 @@ void SPDPrinter::emitOutParams(uint64_t VL) {
 
     Iter++;
     if (Iter == IR->write_end()) {
-      *OS << "attr, sop, eop};\n";
+      *OS << "oattr, sop, eop};\n";
       break;
     }
   }
@@ -194,20 +194,30 @@ void SPDPrinter::emitInstruction(SPDInstr *I, uint64_t VL) {
         = (StreamOffset > 0) ? StreamOffset : -StreamOffset;
 
       emitHDLPrefix();
-      *OS << OffsetAbs + 2 << " ";
+
+      if (StreamOffset > 0) { // foward
+        *OS << OffsetAbs + 2 << ", (";
+      }
+      else { // backward
+        *OS << 2 << ", (";
+      }
+
       emitValue(dyn_cast<Value>(Instr), VL);
-      *OS << " = ";
-      if (StreamOffset > 0) {
+      *OS << ")() = ";
+
+      if (StreamOffset > 0) { // foward
         *OS << "mStreamFoward(";
         MemoryAccess *MA = I->getMemoryAccess();
         *OS << MA->getOriginalBaseAddr()->getName().str() << VL;
-        *OS << ", " << OffsetAbs << ");\n";
+        *OS << ", Mi::eop[0])(), <.pConstWord(0),.pFwdCycles("
+            << OffsetAbs << ")>;\n";
       }
-      else {
+      else { // backward
         *OS << "mStreamBackward(";
         MemoryAccess *MA = I->getMemoryAccess();
         *OS << MA->getOriginalBaseAddr()->getName().str() << VL;
-        *OS << ", " << OffsetAbs << ");\n";
+        *OS << ", Mi::eop[0])(), <.pConstWord(0),.pBwdCycles("
+            << OffsetAbs << ")>;\n";
       }
     }
   }
@@ -232,7 +242,7 @@ void SPDPrinter::emitInstruction(SPDInstr *I, uint64_t VL) {
 // condition
 // FIXME requires name check "attr"
 //       more complex condition can improve coverage
-    *OS << ", Mi::attr[0]);\n";
+    *OS << ", iattr[0]);\n";
   }
   else if (Instr->isBinaryOp()) {
     emitEQUPrefix();
@@ -278,7 +288,7 @@ void SPDPrinter::emitUnrollModule(std::string &UnrolledKernelName,
     }
 
     if (i == (UC - 1)) {
-      *OS << "Mo::attr, Mo::sop, Mo::eop) = ";
+      *OS << "oattr, Mo::sop, Mo::eop) = ";
     }
     else {
       *OS << "xxxt" << Id << i << ", "; Id++; // attr
@@ -305,7 +315,7 @@ void SPDPrinter::emitUnrollModule(std::string &UnrolledKernelName,
     }
 
     if (i == 0) {
-      *OS << "Mi::attr, Mi::sop, Mi::eop);\n";
+      *OS << "iattr, Mi::sop, Mi::eop);\n";
     }
     else {
       *OS << "xxxt" << Id << i - 1 << ", "; Id++; // attr
@@ -336,7 +346,7 @@ SPDPrinter::SPDPrinter(SPDIR *I, uint64_t VL, uint64_t UC)
 
 // FIXME attr should be optional
   *OS <<
-    "DRCT     (Mo::attr, Mo::sop, Mo::eop) = (MI::attr, Mi::sop, Mi::eop);\n";
+    "DRCT     (oattr, Mo::sop, Mo::eop) = (iattr, Mi::sop, Mi::eop);\n";
 
   delete OS;
 
