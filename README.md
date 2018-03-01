@@ -19,6 +19,7 @@ mkdir $(HOME)/LLVM/build
 6. prepare build at $(HOME)/LLVM/build  
 cmake -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX={LLVM_INSTALL_PATH_YOU_WANT} ../llvm-5.0.0.src/  
 7. make and make install  
+e.g.) make -j32 install  
 8. set PATH, LD_LIBRARY_PATH for LLVM, for example:  
   export PATH=$(LLVM_PATH)/bin:$PATH  
   export LD_LIBRARY_PATH=$(LLVM_PATH)/lib:$LD_LIBRARY_PATH  
