@@ -206,7 +206,7 @@ void SPDPrinter::emitInstruction(SPDInstr *I, uint64_t VL) {
       *OS << ")() = ";
 
       if (StreamOffset > 0) { // foward
-        *OS << "mStreamFoward(";
+        *OS << "mStreamForward(";
         MemoryAccess *MA = I->getMemoryAccess();
         *OS << MA->getOriginalBaseAddr()->getName().str() << VL;
         *OS << ", Mi::eop[0])(), <.pConstWord(0),.pFwdCycles("
