@@ -261,26 +261,34 @@ void SPDPrinter::emitInstruction(SPDInstr *I, uint64_t VL) {
 void SPDPrinter::emitUnrollModule(std::string &UnrolledKernelName,
                                   std::string &KernelName,
                                   uint64_t VL, uint64_t UC) {
-  assert((IR->getNumReads() == IR->getNumWrites()) &&
-         "number of read/write arrays are not equal");
-
 // DECL part
   emitModuleDecl(UnrolledKernelName, VL);
 
 // EQU Part
+  if (IR->getNumReads() != IR->getNumWrites()) {
+    llvm_unreachable("number of read/write arrays are not equal");
+  }
+
+  assert((VL > 0) && "VL should be more than 0");
+
+// FIXME
+// +3 is for attr, sop, eop
+// remove this magic number when attr becomes optional
+  int SurfixInc = (IR->getNumWrites() * VL) + 3;
+  int SurfixStart = 0;
   for (uint64_t i = 0; i < UC; i++) {
 // writes
+    int WriteId = SurfixStart;
     *OS << "HDL      core" << i << ", ###, (";
-    int Id = 0;
     for (auto Iter = IR->write_begin();
-         Iter != IR->write_end(); Iter++, Id++) {
+         Iter != IR->write_end(); Iter++) {
       SPDArrayInfo *AI = *Iter;
       for (uint64_t j = 0; j < VL; j++) {
         if (i == (UC - 1)) {
           *OS << AI->getArrayRef()->getName().str() << j;
         }
         else {
-          *OS << "xxxt" << Id << i << j;
+          *OS << "xxxt" << WriteId; WriteId++;
         }
 
         *OS << ", ";
@@ -291,23 +299,23 @@ void SPDPrinter::emitUnrollModule(std::string &UnrolledKernelName,
       *OS << "oattr, Mo::sop, Mo::eop) = ";
     }
     else {
-      *OS << "xxxt" << Id << i << ", "; Id++; // attr
-      *OS << "xxxt" << Id << i << ", "; Id++; // sop
-      *OS << "xxxt" << Id << i << ") = ";     // eop
+      *OS << "xxxt" << WriteId << ", "; WriteId++; // attr
+      *OS << "xxxt" << WriteId << ", "; WriteId++; // sop
+      *OS << "xxxt" << WriteId << ") = ";     // eop
     }
 
 // reads
+    int ReadId = SurfixStart - SurfixInc;
     *OS << KernelName << "(";
-    Id = 0;
     for (auto Iter = IR->read_begin();
-         Iter != IR->read_end(); Iter++, Id++) {
+         Iter != IR->read_end(); Iter++) {
       SPDArrayInfo *AI = *Iter;
       for (uint64_t j = 0; j < VL; j++) {
         if (i == 0) {
           *OS << AI->getArrayRef()->getName().str() << j;
         }
         else {
-          *OS << "xxxt" << Id << i - 1 << j;
+          *OS << "xxxt" << ReadId; ReadId++;
         }
 
         *OS << ", ";
@@ -318,10 +326,12 @@ void SPDPrinter::emitUnrollModule(std::string &UnrolledKernelName,
       *OS << "iattr, Mi::sop, Mi::eop);\n";
     }
     else {
-      *OS << "xxxt" << Id << i - 1 << ", "; Id++; // attr
-      *OS << "xxxt" << Id << i - 1 << ", "; Id++; // sop
-      *OS << "xxxt" << Id << i - 1 << ");\n";     // eop
+      *OS << "xxxt" << ReadId << ", "; ReadId++; // attr
+      *OS << "xxxt" << ReadId << ", "; ReadId++; // sop
+      *OS << "xxxt" << ReadId << ");\n";     // eop
     }
+
+    SurfixStart += SurfixInc;
   }
 }
 
