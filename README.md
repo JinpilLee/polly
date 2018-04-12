@@ -26,3 +26,6 @@ e.g.) make -j32 install
 
 How to generate SPDFile (compile option)  
 clang -O3 -fno-inline -c -mllvm -polly -mllvm -polly-enable-spdgen test.c
+
+TODO:
+mirror from git repo
