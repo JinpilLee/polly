@@ -392,7 +392,7 @@ static isl_stat getConstantFromAff(__isl_take isl_set *Domain,
   return isl_stat_ok;
 }
 
-// FIXME temporary impl
+// FIXME temporary implementation
 std::vector<long> SPDIR::getLoopTripCounts(const ScopStmt &Stmt) const {
   std::vector<long> Ret;
   isl_set *SD = Stmt.getDomain();
